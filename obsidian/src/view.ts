@@ -3,9 +3,11 @@ import {
   FuzzySuggestModal,
   ItemView,
   Notice,
+  normalizePath,
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
+import { relative } from "path";
 
 import type LabOSPlugin from "./main";
 import type { LabOSEvent, SessionState } from "./types";
@@ -175,6 +177,11 @@ export class LabOSView extends ItemView {
         new Notice(`LabOS started: ${projectValue}`);
       });
     });
+
+    const report = section.createEl("button", { text: "Generate last AI report" });
+    report.addEventListener("click", () => {
+      void this.generateReport(report);
+    });
   }
 
   private renderActiveSession(
@@ -248,6 +255,11 @@ export class LabOSView extends ItemView {
       }).open();
     });
 
+    const report = section.createEl("button", { text: "Generate AI report" });
+    report.addEventListener("click", () => {
+      void this.generateReport(report, session.session_id);
+    });
+
     const end = section.createEl("button", { text: "End work" });
     end.addEventListener("click", () => {
       void this.act(async () => {
@@ -296,6 +308,70 @@ export class LabOSView extends ItemView {
         .attach(fullPath, isPhoto(file) ? "photo" : "artifact");
       new Notice(`Attached: ${file.name}`);
     });
+  }
+
+  private async generateReport(
+    button: HTMLButtonElement,
+    sessionId?: string,
+  ): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      new Notice("AI reports currently require Obsidian desktop.");
+      return;
+    }
+
+    const folder = normalizePath(this.plugin.settings.reportsFolder)
+      .replace(/^\/+/, "");
+    if (!folder || folder === ".." || folder.startsWith("../")) {
+      new Notice("Reports folder must stay inside the Obsidian vault.");
+      return;
+    }
+
+    const original = button.textContent || "Generate AI report";
+    button.disabled = true;
+    button.setText("Generating…");
+    new Notice(
+      `LabOS report: ${this.plugin.settings.reportWorker} → ` +
+      `${this.plugin.settings.reportValidator} → ` +
+      `${this.plugin.settings.reportCritic} → ` +
+      `${this.plugin.settings.reportWorker}`,
+      6000,
+    );
+
+    try {
+      const result = await this.plugin.getBackend().report(
+        adapter.getFullPath(folder),
+        {
+          sessionId,
+          worker: this.plugin.settings.reportWorker,
+          validator: this.plugin.settings.reportValidator,
+          critic: this.plugin.settings.reportCritic,
+          timeoutSeconds: this.plugin.settings.reportTimeoutSeconds,
+        },
+      );
+
+      const vaultPath = normalizePath(
+        relative(adapter.getBasePath(), result.markdown),
+      );
+      new Notice(
+        `Report ready. Markdown opened; Overleaf ZIP: ${result.overleaf_zip}`,
+        10000,
+      );
+
+      await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 250));
+      const file = this.app.vault.getFileByPath(vaultPath);
+      if (file) {
+        await this.app.workspace.getLeaf(false).openFile(file);
+      } else {
+        new Notice(`Report saved at: ${vaultPath}`, 10000);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(message, 12000);
+    } finally {
+      button.disabled = false;
+      button.setText(original);
+    }
   }
 
   private renderTimeline(
