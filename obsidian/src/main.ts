@@ -9,6 +9,7 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   executable: "labos",
   home: "~/labos-data",
   defaultProject: "",
+  defaultWorkdir: "",
   recentLimit: 30,
 };
 
