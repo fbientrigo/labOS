@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { execFile } from "child_process";
+import { readFile } from "fs/promises";
+import { homedir } from "os";
+import { join, resolve } from "path";
 
 import type {
   CheckpointState,
