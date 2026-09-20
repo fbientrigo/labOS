@@ -28,7 +28,7 @@ labos bad "events disappear after ~70 s"
 labos end "continue from DRS4 state tomorrow"
 ```
 
-`start`, `good`, `bad`, and `end` automatically snapshot the current Git repository when one exists. LabOS never commits or pushes.
+`start`, `good`, `bad`, and `end` snapshot the session's working directory when it is a Git repository. By default that directory is where `labos start` was run; interfaces such as the Obsidian plugin can set it explicitly with `--cwd`. LabOS never commits or pushes.
 
 Notes can also be captured without an active session:
 
@@ -65,7 +65,7 @@ pytest
 ## Current commands
 
 ```text
-labos start PROJECT [--label TEXT]
+labos start PROJECT [--label TEXT] [--cwd PATH]
 labos note TEXT...
 labos good [TEXT...]
 labos bad [TEXT...]
