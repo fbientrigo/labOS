@@ -1,6 +1,17 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 
 import type LabOSPlugin from "./main";
+import type { AgentProvider } from "./types";
+
+const PROVIDERS: AgentProvider[] = ["agy", "codex", "claude"];
+
+function addProviderOptions(dropdown: {
+  addOption(value: string, display: string): unknown;
+}): void {
+  for (const provider of PROVIDERS) {
+    dropdown.addOption(provider, provider);
+  }
+}
 
 export class LabOSSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: LabOSPlugin) {
@@ -74,6 +85,76 @@ export class LabOSSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value, 10);
             if (Number.isFinite(parsed) && parsed > 0 && parsed <= 200) {
               this.plugin.settings.recentLimit = parsed;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    containerEl.createEl("h3", { text: "AI report" });
+
+    new Setting(containerEl)
+      .setName("Reports folder")
+      .setDesc("Folder inside this Obsidian vault for editable reports and Overleaf ZIPs.")
+      .addText((text) =>
+        text
+          .setPlaceholder("LabOS/Reports")
+          .setValue(this.plugin.settings.reportsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.reportsFolder = value.trim() || "LabOS/Reports";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Worker")
+      .setDesc("Creates the draft and final revised report.")
+      .addDropdown((dropdown) => {
+        addProviderOptions(dropdown);
+        dropdown
+          .setValue(this.plugin.settings.reportWorker)
+          .onChange(async (value) => {
+            this.plugin.settings.reportWorker = value as AgentProvider;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Validator")
+      .setDesc("Checks factual claims and event citations against raw LabOS evidence.")
+      .addDropdown((dropdown) => {
+        addProviderOptions(dropdown);
+        dropdown
+          .setValue(this.plugin.settings.reportValidator)
+          .onChange(async (value) => {
+            this.plugin.settings.reportValidator = value as AgentProvider;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Critic")
+      .setDesc("Challenges usefulness, missing checks, and false confidence.")
+      .addDropdown((dropdown) => {
+        addProviderOptions(dropdown);
+        dropdown
+          .setValue(this.plugin.settings.reportCritic)
+          .onChange(async (value) => {
+            this.plugin.settings.reportCritic = value as AgentProvider;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("Agent timeout")
+      .setDesc("Maximum seconds allowed for each agent call.")
+      .addText((text) =>
+        text
+          .setPlaceholder("300")
+          .setValue(String(this.plugin.settings.reportTimeoutSeconds))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            if (Number.isFinite(parsed) && parsed >= 30 && parsed <= 1800) {
+              this.plugin.settings.reportTimeoutSeconds = parsed;
               await this.plugin.saveSettings();
             }
           }),
