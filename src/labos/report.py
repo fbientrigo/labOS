@@ -26,8 +26,8 @@ REPORT_KEYS = {
 def _extract_json(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if text.startswith("```"):
-        text = re.sub(r"^\`\`\`(?:json)?\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s*\`\`\`$", "", text)
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
@@ -328,11 +328,11 @@ def _markdown_report(
         "## Context",
         "",
         f"- Project: **{session.get('project') or 'unknown'}**",
-        f"- Session: \`{session.get('session_id')}\`",
+        f"- Session: `{session.get('session_id')}`",
         f"- Status: {session.get('status')}",
         f"- Started: {session.get('started_at')}",
         f"- Ended: {session.get('ended_at') or 'active'}",
-        f"- Workdir: \`{session.get('workdir') or ''}\`",
+        f"- Workdir: `{session.get('workdir') or ''}`",
         "",
         "## Executive summary",
         "",
@@ -344,7 +344,7 @@ def _markdown_report(
     if report["facts"]:
         for item in report["facts"]:
             refs = ", ".join(item["evidence_event_ids"])
-            lines.append(f"- {item['claim']}  \n  Evidence: \`{refs}\`")
+            lines.append(f"- {item['claim']}  \n  Evidence: `{refs}`")
     else:
         lines.append("_No supported factual claims survived validation._")
 
@@ -352,7 +352,7 @@ def _markdown_report(
     if report["changes"]:
         for item in report["changes"]:
             refs = ", ".join(item["evidence_event_ids"])
-            lines.append(f"- {item['change']}  \n  Evidence: \`{refs}\`")
+            lines.append(f"- {item['change']}  \n  Evidence: `{refs}`")
     else:
         lines.append("_No explicit change was identified._")
 
@@ -402,9 +402,9 @@ def _markdown_report(
         "",
         "## Generation provenance",
         "",
-        f"- Worker: \`{providers['worker']}\`",
-        f"- Validator: \`{providers['validator']}\`",
-        f"- Critic: \`{providers['critic']}\`",
+        f"- Worker: `{providers['worker']}`",
+        f"- Validator: `{providers['validator']}`",
+        f"- Critic: `{providers['critic']}`",
         f"- Generated: {now_iso()}",
         "",
     ]
