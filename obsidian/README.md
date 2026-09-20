@@ -8,13 +8,14 @@ The plugin does **not** implement a second evidence store. It executes the exist
 
 - right-side LabOS panel;
 - start/end work session;
+- optional repo/work directory so Git snapshots refer to the experiment rather than the Obsidian process;
 - quick notes with Enter;
 - WORKING / BROKEN checkpoints;
 - attach the current note or another file from the vault;
 - current-session / recent timeline;
 - command to capture selected editor text;
 - commands for WORKING / BROKEN;
-- configurable LabOS executable, evidence home, default project, and timeline length.
+- configurable LabOS executable, evidence home, default project/workdir, and timeline length.
 
 ## Requirements
 
@@ -55,6 +56,8 @@ Then reload Obsidian, enable **LabOS** under Community plugins, and open it from
 
 For development, placing/symlinking this directory at `<Vault>/.obsidian/plugins/labos` avoids copying files after every build.
 
+GitHub Actions also publishes those three files together as the `labos-obsidian` build artifact.
+
 ## LabOS CLI
 
 From the repository root:
@@ -66,6 +69,8 @@ pip install -e .
 ```
 
 If Obsidian cannot find `labos` because it was launched outside your shell environment, set an absolute executable path in **Settings -> LabOS -> LabOS executable**.
+
+Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.
 
 ## Data ownership
 
