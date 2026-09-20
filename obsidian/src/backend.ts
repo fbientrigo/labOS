@@ -4,10 +4,12 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 
 import type {
+  AgentProvider,
   CheckpointState,
   LabOSBackend,
   LabOSEvent,
   LabOSSettings,
+  ReportResult,
   SessionState,
 } from "./types";
 
@@ -46,14 +48,14 @@ export class CliLabOSBackend implements LabOSBackend {
         {
           encoding: "utf8",
           windowsHide: true,
-          maxBuffer: 1024 * 1024,
+          maxBuffer: 4 * 1024 * 1024,
         },
         (error, stdout, stderr) => {
           if (error) {
-            const detail = stderr.trim() || error.message;
+            const detail = stderr.trim() || stdout.trim() || error.message;
             rejectRun(
               new Error(
-                `LabOS CLI failed: ${detail}. Check the executable path in LabOS settings.`,
+                `LabOS CLI failed: ${detail}. Check LabOS and agent CLI settings.`,
               ),
             );
             return;
@@ -108,6 +110,35 @@ export class CliLabOSBackend implements LabOSBackend {
 
   async end(text?: string): Promise<void> {
     await this.run("end", text ? [text] : []);
+  }
+
+  async report(
+    outputDir: string,
+    options: {
+      sessionId?: string;
+      worker: AgentProvider;
+      validator: AgentProvider;
+      critic: AgentProvider;
+      timeoutSeconds: number;
+    },
+  ): Promise<ReportResult> {
+    const args = [
+      "--output-dir",
+      outputDir,
+      "--worker",
+      options.worker,
+      "--validator",
+      options.validator,
+      "--critic",
+      options.critic,
+      "--timeout",
+      String(options.timeoutSeconds),
+    ];
+    if (options.sessionId) {
+      args.push("--session-id", options.sessionId);
+    }
+    const raw = await this.run("report", args);
+    return JSON.parse(raw) as ReportResult;
   }
 
   async recent(limit: number): Promise<LabOSEvent[]> {
