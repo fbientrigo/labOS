@@ -20,6 +20,9 @@ CRITIC -> usefulness + missing checks
 WORKER -> revised final JSON
     |
     v
+VALIDATOR -> final factual/citation audit
+    |
+    v
 Python grounding gate
     |
     +--> report.md
@@ -46,7 +49,7 @@ validator codex
 critic    claude
 ```
 
-The worker is called twice: once for the draft and once after validator/critic feedback.
+The worker is called twice: once for the draft and once after validator/critic feedback. The validator is also called twice so the final revision is audited before rendering.
 
 LabOS uses already-installed and already-authenticated local CLIs. It does not store API keys.
 
