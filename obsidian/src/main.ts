@@ -11,6 +11,11 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   defaultProject: "",
   defaultWorkdir: "",
   recentLimit: 30,
+  reportsFolder: "LabOS/Reports",
+  reportWorker: "agy",
+  reportValidator: "codex",
+  reportCritic: "claude",
+  reportTimeoutSeconds: 300,
 };
 
 export default class LabOSPlugin extends Plugin {
