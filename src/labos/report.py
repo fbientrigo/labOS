@@ -223,17 +223,33 @@ def _valid_ids(raw: Any, allowed: set[str]) -> list[str]:
 def _sanitize_report(
     report: dict[str, Any],
     evidence: dict[str, Any],
+    validation: dict[str, Any],
 ) -> dict[str, Any]:
     allowed = set(evidence["allowed_event_ids"])
+    blocked_facts = {
+        int(item)
+        for item in validation.get("unsupported_fact_indices", [])
+        if isinstance(item, int) or (isinstance(item, str) and item.isdigit())
+    }
+    blocked_changes = {
+        int(item)
+        for item in validation.get("unsupported_change_indices", [])
+        if isinstance(item, int) or (isinstance(item, str) and item.isdigit())
+    }
+
     facts = []
-    for item in _list_of_dicts(report.get("facts")):
+    for index, item in enumerate(_list_of_dicts(report.get("facts"))):
+        if index in blocked_facts:
+            continue
         ids = _valid_ids(item.get("evidence_event_ids"), allowed)
         claim = str(item.get("claim", "")).strip()
         if claim and ids:
             facts.append({"claim": claim, "evidence_event_ids": ids})
 
     changes = []
-    for item in _list_of_dicts(report.get("changes")):
+    for index, item in enumerate(_list_of_dicts(report.get("changes"))):
+        if index in blocked_changes:
+            continue
         ids = _valid_ids(item.get("evidence_event_ids"), allowed)
         change = str(item.get("change", "")).strip()
         if change and ids:
@@ -368,7 +384,7 @@ def _markdown_report(
     issues = validation.get("issues")
     lines += ["", "## Validation / critique", ""]
     lines.append(
-        f"- Validator approved draft: **{bool(validation.get('approved'))}**"
+        f"- Validator approved final report: **{bool(validation.get('approved'))}**"
     )
     if isinstance(issues, list):
         for issue in issues:
@@ -562,12 +578,20 @@ def generate_report(
                 timeout_seconds=timeout_seconds,
             )
         )
+        final_validation = _extract_json(
+            runner.run(
+                validator,
+                _validator_prompt(evidence, final_raw),
+                cwd=agent_cwd,
+                timeout_seconds=timeout_seconds,
+            )
+        )
 
-    final_report = _sanitize_report(final_raw, evidence)
+    final_report = _sanitize_report(final_raw, evidence, final_validation)
     markdown = _markdown_report(
         evidence,
         final_report,
-        validation,
+        final_validation,
         critique,
         providers,
     )
@@ -586,8 +610,9 @@ def generate_report(
                 "generated_at": now_iso(),
                 "providers": providers,
                 "draft": draft,
-                "validation": validation,
+                "draft_validation": validation,
                 "critique": critique,
+                "final_validation": final_validation,
                 "final": final_report,
             },
             indent=2,
