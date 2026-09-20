@@ -79,10 +79,17 @@ export class CliLabOSBackend implements LabOSBackend {
     }
   }
 
-  async start(project: string, label?: string): Promise<void> {
+  async start(
+    project: string,
+    label?: string,
+    workdir?: string,
+  ): Promise<void> {
     const args = [project];
     if (label) {
       args.push("--label", label);
+    }
+    if (workdir) {
+      args.push("--cwd", workdir);
     }
     await this.run("start", args);
   }
