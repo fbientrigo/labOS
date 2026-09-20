@@ -77,7 +77,7 @@ def test_validated_report_writes_markdown_latex_and_overleaf_zip(
             },
             {
                 "claim": "Invented unsupported voltage.",
-                "evidence_event_ids": ["ev_not_real"],
+                "evidence_event_ids": [note["id"]],
             },
         ],
         "changes": [
@@ -99,7 +99,21 @@ def test_validated_report_writes_markdown_latex_and_overleaf_zip(
         "uncertainties": ["Causality is not established."],
     }
 
-    runner = FakeRunner([draft, validation, critique, final])
+    final_validation = {
+        "approved": False,
+        "issues": [
+            {
+                "severity": "error",
+                "claim": "Invented unsupported voltage.",
+                "reason": "The cited event does not support a voltage claim.",
+                "evidence_event_ids": [note["id"]],
+            }
+        ],
+        "unsupported_fact_indices": [1],
+        "unsupported_change_indices": [],
+    }
+
+    runner = FakeRunner([draft, validation, critique, final, final_validation])
     result = generate_report(
         home,
         tmp_path / "vault" / "LabOS" / "Reports",
@@ -111,7 +125,7 @@ def test_validated_report_writes_markdown_latex_and_overleaf_zip(
         timeout_seconds=123,
     )
 
-    assert runner.calls == ["agy", "codex", "claude", "agy"]
+    assert runner.calls == ["agy", "codex", "claude", "agy", "codex"]
 
     markdown = Path(result["markdown"])
     latex = Path(result["latex"])
@@ -128,7 +142,7 @@ def test_validated_report_writes_markdown_latex_and_overleaf_zip(
     assert "Invented unsupported voltage." not in rendered
     assert "Record DRS4 state at the failure boundary." in rendered
     assert note["id"] in rendered
-    assert "Validator approved draft: **True**" in rendered
+    assert "Validator approved final report: **False**" in rendered
 
     with zipfile.ZipFile(overleaf) as archive:
         assert set(archive.namelist()) == {
@@ -183,6 +197,12 @@ def test_report_defaults_to_active_session(tmp_path: Path, monkeypatch) -> None:
                 "revision_instructions": [],
             },
             final,
+            {
+                "approved": True,
+                "issues": [],
+                "unsupported_fact_indices": [],
+                "unsupported_change_indices": [],
+            },
         ]
     )
 
