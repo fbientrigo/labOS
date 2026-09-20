@@ -151,6 +151,12 @@ export class LabOSView extends ItemView {
       attr: { placeholder: "What are you doing? (optional)" },
     });
 
+    const workdir = section.createEl("input", {
+      cls: "labos-input",
+      attr: { placeholder: "Repo/work directory for Git snapshots (optional)" },
+    });
+    workdir.value = this.plugin.settings.defaultWorkdir;
+
     const start = section.createEl("button", { text: "Start" });
     start.addEventListener("click", () => {
       const projectValue = project.value.trim();
@@ -161,7 +167,11 @@ export class LabOSView extends ItemView {
       }
 
       void this.act(async () => {
-        await this.plugin.getBackend().start(projectValue, label.value.trim());
+        await this.plugin.getBackend().start(
+          projectValue,
+          label.value.trim() || undefined,
+          workdir.value.trim() || undefined,
+        );
         new Notice(`LabOS started: ${projectValue}`);
       });
     });
@@ -181,6 +191,12 @@ export class LabOSView extends ItemView {
       cls: "labos-event-time",
       text: `Started ${new Date(session.started_at).toLocaleString()}`,
     });
+    if (session.started_cwd) {
+      section.createDiv({
+        cls: "labos-event-time",
+        text: session.started_cwd,
+      });
+    }
 
     const capture = section.createEl("textarea", {
       cls: "labos-textarea",
