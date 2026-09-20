@@ -4,6 +4,7 @@ export interface LabOSSettings {
   executable: string;
   home: string;
   defaultProject: string;
+  defaultWorkdir: string;
   recentLimit: number;
 }
 
@@ -29,7 +30,7 @@ export interface LabOSEvent {
 
 export interface LabOSBackend {
   status(): Promise<SessionState | null>;
-  start(project: string, label?: string): Promise<void>;
+  start(project: string, label?: string, workdir?: string): Promise<void>;
   note(text: string): Promise<void>;
   checkpoint(state: CheckpointState, text?: string): Promise<void>;
   attach(path: string, kind: "artifact" | "photo"): Promise<void>;
