@@ -51,6 +51,19 @@ export class LabOSSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Default work directory")
+      .setDesc("Optional repo/work directory used for Git snapshots.")
+      .addText((text) =>
+        text
+          .setPlaceholder("~/thesis/atlasfpga_continuous_tcp")
+          .setValue(this.plugin.settings.defaultWorkdir)
+          .onChange(async (value) => {
+            this.plugin.settings.defaultWorkdir = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Recent events")
       .setDesc("Number of recent events shown in the LabOS panel.")
       .addText((text) =>
