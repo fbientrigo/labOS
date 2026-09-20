@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from .agents import SUPPORTED_PROVIDERS
 from .ledger import (
     active_session,
     add_note,
@@ -15,6 +16,7 @@ from .ledger import (
     recent_events,
     start_session,
 )
+from .report import generate_report
 
 
 def _text(parts: list[str] | None) -> str | None:
@@ -94,6 +96,17 @@ def build_parser() -> argparse.ArgumentParser:
     recent = sub.add_parser("recent", help="Show recent evidence events.")
     recent.add_argument("-n", "--limit", type=int, default=20)
 
+    report = sub.add_parser(
+        "report",
+        help="Generate a validated AI advice report for the active/latest session.",
+    )
+    report.add_argument("--output-dir", type=Path, required=True)
+    report.add_argument("--session-id")
+    report.add_argument("--worker", choices=SUPPORTED_PROVIDERS, default="agy")
+    report.add_argument("--validator", choices=SUPPORTED_PROVIDERS, default="codex")
+    report.add_argument("--critic", choices=SUPPORTED_PROVIDERS, default="claude")
+    report.add_argument("--timeout", type=int, default=300)
+
     return parser
 
 
@@ -137,6 +150,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "recent":
             for event in recent_events(home, args.limit):
                 print(_short_event(event))
+        elif args.command == "report":
+            result = generate_report(
+                home,
+                args.output_dir,
+                session_id=args.session_id,
+                worker=args.worker,
+                validator=args.validator,
+                critic=args.critic,
+                timeout_seconds=args.timeout,
+            )
+            print(json.dumps(result, sort_keys=True))
         else:
             parser.error(f"unknown command: {args.command}")
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
