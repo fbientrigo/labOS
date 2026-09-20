@@ -1,0 +1,61 @@
+.labos-view {
+  padding: var(--size-4-3);
+}
+
+.labos-header,
+.labos-row,
+.labos-actions,
+.labos-event-head {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: center;
+}
+
+.labos-header,
+.labos-event-head {
+  justify-content: space-between;
+}
+
+.labos-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.labos-section {
+  margin-top: var(--size-4-4);
+}
+
+.labos-input,
+.labos-textarea {
+  width: 100%;
+}
+
+.labos-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.labos-actions {
+  flex-wrap: wrap;
+}
+
+.labos-event {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: var(--size-4-2) 0;
+}
+
+.labos-event-time {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.labos-event-kind {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: var(--font-ui-smaller);
+}
+
+.labos-error {
+  color: var(--text-error);
+}
