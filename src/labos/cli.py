@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="Start an explicit work session.")
     start.add_argument("project")
     start.add_argument("--label")
+    start.add_argument(
+        "--cwd",
+        type=Path,
+        help="Experiment/repository working directory. Defaults to the current directory.",
+    )
 
     note = sub.add_parser("note", help="Append a note; works even without a session.")
     note.add_argument("text", nargs="+")
@@ -99,7 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "start":
-            event = start_session(home, args.project, args.label)
+            event = start_session(home, args.project, args.label, args.cwd)
             print(f"STARTED {event['project']}  {event['session_id']}")
         elif args.command == "note":
             event = add_note(home, _text(args.text) or "")

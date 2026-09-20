@@ -16,7 +16,7 @@ Before building a web app, database, embeddings, or autonomous agents, Phase 0 t
 
 > Do I naturally leave useful evidence while doing real laboratory work?
 
-The initial interface is deliberately small:
+The core interface is deliberately small and remains available from the terminal:
 
 ```bash
 labos start tgc --label "Zynq trigger debugging"
@@ -28,7 +28,7 @@ labos bad "events disappear after ~70 s"
 labos end "continue from DRS4 state tomorrow"
 ```
 
-`start`, `good`, `bad`, and `end` automatically snapshot the current Git repository when one exists. LabOS never commits or pushes.
+`start`, `good`, `bad`, and `end` snapshot the session's working directory when it is a Git repository. By default that directory is where `labos start` was run; interfaces such as the Obsidian plugin can set it explicitly with `--cwd`. LabOS never commits or pushes.
 
 Notes can also be captured without an active session:
 
@@ -65,7 +65,7 @@ pytest
 ## Current commands
 
 ```text
-labos start PROJECT [--label TEXT]
+labos start PROJECT [--label TEXT] [--cwd PATH]
 labos note TEXT...
 labos good [TEXT...]
 labos bad [TEXT...]
@@ -74,6 +74,20 @@ labos end [TEXT...]
 labos status
 labos recent [-n N]
 ```
+
+## Obsidian desktop UI
+
+The optional `obsidian/` plugin is a thin UX layer over the same CLI and raw evidence:
+
+```text
+Terminal ───────┐
+                ├─> LabOS CLI ─> events.jsonl / artifacts
+Obsidian panel ─┘
+```
+
+It provides Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, and capture of selected editor text. It does not implement a second evidence store.
+
+Build/install instructions live in [`obsidian/README.md`](obsidian/README.md).
 
 ## Design invariants
 
@@ -87,13 +101,13 @@ labos recent [-n N]
 
 ## Explicit non-goals for Phase 0
 
-No FastAPI/UI, SQLite, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or Dreams.
+No FastAPI or standalone web app, SQLite, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or Dreams.
 
 Those features must earn their place from observed failures in real use.
 
 ## 10-day experiment
 
-Use the CLI during real laboratory work without adding product features. At the end, test whether the captured evidence answers real questions such as:
+Use the CLI and/or the thin Obsidian panel during real laboratory work without adding product features. At the end, test whether the captured evidence answers real questions such as:
 
 - Which firmware/commit was working?
 - What changed between WORKING and BROKEN?

@@ -1,0 +1,10 @@
+{
+  "id": "labos",
+  "name": "LabOS",
+  "version": "0.1.0",
+  "minAppVersion": "1.7.2",
+  "description": "Low-friction capture and review for the LabOS experimental evidence ledger.",
+  "author": "fbientrigo",
+  "authorUrl": "https://github.com/fbientrigo",
+  "isDesktopOnly": true
+}
