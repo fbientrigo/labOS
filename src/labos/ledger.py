@@ -60,6 +60,13 @@ def active_session(home: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _session_workdir(session: dict[str, Any]) -> Path:
+    stored = session.get("started_cwd")
+    if isinstance(stored, str) and stored:
+        return Path(stored).expanduser().resolve()
+    return Path.cwd().resolve()
+
+
 def append_event(
     home: Path,
     event_type: str,
@@ -72,6 +79,7 @@ def append_event(
     if session is None:
         session = active_session(home)
 
+    event_cwd = _session_workdir(session) if session else Path.cwd().resolve()
     event = {
         "schema_version": SCHEMA_VERSION,
         "id": event_id or _new_id("ev"),
@@ -79,7 +87,7 @@ def append_event(
         "type": event_type,
         "session_id": session.get("session_id") if session else None,
         "project": session.get("project") if session else None,
-        "cwd": str(Path.cwd().resolve()),
+        "cwd": str(event_cwd),
         "payload": payload or {},
     }
 
@@ -127,10 +135,19 @@ def git_snapshot(cwd: Path | None = None) -> dict[str, Any]:
     }
 
 
-def start_session(home: Path, project: str, label: str | None = None) -> dict[str, Any]:
+def start_session(
+    home: Path,
+    project: str,
+    label: str | None = None,
+    workdir: Path | None = None,
+) -> dict[str, Any]:
     home = ensure_home(home)
     if active_session(home):
         raise RuntimeError("A LabOS session is already active. End it before starting another.")
+
+    session_workdir = (workdir or Path.cwd()).expanduser().resolve()
+    if not session_workdir.is_dir():
+        raise FileNotFoundError(f"LabOS work directory does not exist: {session_workdir}")
 
     state = {
         "schema_version": SCHEMA_VERSION,
@@ -138,13 +155,13 @@ def start_session(home: Path, project: str, label: str | None = None) -> dict[st
         "project": project,
         "label": label,
         "started_at": now_iso(),
-        "started_cwd": str(Path.cwd().resolve()),
+        "started_cwd": str(session_workdir),
     }
     _atomic_json_write(_state_path(home), state)
     return append_event(
         home,
         "session_start",
-        {"label": label, "git": git_snapshot()},
+        {"label": label, "git": git_snapshot(session_workdir)},
         session=state,
     )
 
@@ -162,7 +179,11 @@ def checkpoint(home: Path, state: str, text: str | None = None) -> dict[str, Any
     return append_event(
         home,
         "checkpoint",
-        {"state": state, "text": text, "git": git_snapshot()},
+        {
+            "state": state,
+            "text": text,
+            "git": git_snapshot(_session_workdir(session)),
+        },
         session=session,
     )
 
@@ -174,7 +195,7 @@ def end_session(home: Path, text: str | None = None) -> dict[str, Any]:
     event = append_event(
         home,
         "session_end",
-        {"text": text, "git": git_snapshot()},
+        {"text": text, "git": git_snapshot(_session_workdir(session))},
         session=session,
     )
     _state_path(home).unlink(missing_ok=True)
