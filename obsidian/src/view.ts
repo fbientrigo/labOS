@@ -162,6 +162,7 @@ export class LabOSView extends ItemView {
   private page: LabOSPage = "today";
   private selectedDeviceId: string | null = null;
   private preselectedStartDeviceIds = new Set<string>();
+  private deviceRegistryError: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -197,11 +198,28 @@ export class LabOSView extends ItemView {
 
     try {
       const backend = this.plugin.getBackend();
-      const [session, devices, events] = await Promise.all([
+      const [session, events] = await Promise.all([
         backend.status(),
-        backend.devices(),
         backend.recent(this.plugin.settings.recentLimit),
       ]);
+
+      let devices: DeviceResource[] = [];
+      this.deviceRegistryError = null;
+      try {
+        devices = await backend.devices();
+      } catch (error) {
+        this.deviceRegistryError =
+          error instanceof Error ? error.message : String(error);
+      }
+
+      if (this.deviceRegistryError) {
+        contentEl.createDiv({
+          cls: "labos-warning",
+          text:
+            "Device registry unavailable. Evidence capture remains available. " +
+            this.deviceRegistryError,
+        });
+      }
 
       let record: SessionRecordResult | null = null;
       if (session) {
@@ -799,8 +817,11 @@ export class LabOSView extends ItemView {
       text: "No physical state is inferred from missing evidence.",
     });
 
-    if (session && isActive && record) {
+    if (record) {
       this.renderDeviceCurrentEvidence(section, device, record);
+    }
+
+    if (session && isActive && record) {
       section.createDiv({
         cls: "labos-muted",
         text:
