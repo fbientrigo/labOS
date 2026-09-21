@@ -48,6 +48,41 @@ def _stale_lock(path: Path, stale_after_seconds: float) -> bool:
     return age > stale_after_seconds
 
 
+def _unlink_retry(
+    path: Path,
+    *,
+    deadline: float,
+    expected_token: str | None = None,
+    poll_seconds: float = 0.01,
+) -> bool:
+    """Remove a lock path, tolerating transient Windows sharing violations."""
+
+    while True:
+        if expected_token is not None:
+            try:
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return True
+            except (OSError, json.JSONDecodeError):
+                current = None
+            if isinstance(current, dict) and current.get("token") != expected_token:
+                return False
+
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_seconds)
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_seconds)
+
+
 @contextmanager
 def ledger_lock(
     home: Path,
@@ -77,11 +112,12 @@ def ledger_lock(
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             if _stale_lock(path, stale_after_seconds):
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-                continue
+                removed = _unlink_retry(
+                    path,
+                    deadline=min(deadline, time.monotonic() + 1.0),
+                )
+                if removed:
+                    continue
             if time.monotonic() >= deadline:
                 raise LabOSLockTimeout(
                     f"Timed out waiting for LabOS ledger lock: {path}"
@@ -98,9 +134,13 @@ def ledger_lock(
     finally:
         if fd is not None:
             os.close(fd)
-        try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-            if current.get("token") == token:
-                path.unlink(missing_ok=True)
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
+        released = _unlink_retry(
+            path,
+            deadline=time.monotonic() + 2.0,
+            expected_token=token,
+        )
+        if not released:
+            # Do not mask an exception raised inside the critical section. A
+            # surviving lock remains recoverable once this PID exits or it ages
+            # past the stale threshold.
             pass
