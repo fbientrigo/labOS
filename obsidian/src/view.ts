@@ -18,7 +18,6 @@ import type {
   ReportMode,
   ReportProgress,
   ReportTask,
-  ResourceSnapshot,
   SessionRecordResult,
   SessionState,
 } from "./types";
@@ -108,18 +107,6 @@ function activeResourceIds(record: SessionRecordResult | null): Set<string> {
       (resource) => resource.resource_id,
     ),
   );
-}
-
-function snapshotFor(
-  device: DeviceResource,
-  snapshots: ResourceSnapshot[],
-): ResourceSnapshot {
-  return snapshots.find((item) => item.resource_id === device.resource_id) ?? {
-    resource_id: device.resource_id,
-    fingerprint: device.fingerprint,
-    alias: device.alias,
-    kind: device.kind,
-  };
 }
 
 class VaultFilePicker extends FuzzySuggestModal<TFile> {
@@ -640,7 +627,7 @@ export class LabOSView extends ItemView {
       : null;
 
     if (selected) {
-      this.renderDeviceDetail(container, selected, session, record, devices);
+      this.renderDeviceDetail(container, selected, session, record);
       return;
     }
 
@@ -741,7 +728,6 @@ export class LabOSView extends ItemView {
     device: DeviceResource,
     session: SessionState | null,
     record: SessionRecordResult | null,
-    devices: DeviceResource[],
   ): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
     const back = section.createEl("button", { cls: "labos-back", text: "← Devices" });
@@ -815,6 +801,12 @@ export class LabOSView extends ItemView {
 
     if (session && isActive && record) {
       this.renderDeviceCurrentEvidence(section, device, record);
+      section.createDiv({
+        cls: "labos-muted",
+        text:
+          "Notes and checkpoints use the complete active resource context. " +
+          "If other devices are active, this evidence is attributable to them too.",
+      });
 
       const capture = section.createEl("textarea", {
         cls: "labos-textarea",
@@ -852,7 +844,6 @@ export class LabOSView extends ItemView {
         "Absence of a recorded change is not proof that a physical setting remained unchanged.",
     });
 
-    void devices;
   }
 
   private renderEditIdentity(container: HTMLElement, device: DeviceResource): void {
