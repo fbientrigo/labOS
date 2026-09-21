@@ -43,6 +43,7 @@ By default LabOS writes to `~/labos-data`; override it with `LABOS_HOME` or `--h
 ```text
 ~/labos-data/
 ├── events.jsonl             # append-only raw evidence
+├── resources.json           # mutable current device identity registry
 ├── artifacts/               # explicit managed copies only
 └── .active-session.json     # mutable convenience state
 ```
@@ -73,6 +74,12 @@ labos attach PATH [--kind artifact|photo] [--copy] [--hash] [--note TEXT]
 labos end [TEXT...]
 labos status
 labos recent [-n N]
+labos device add --fingerprint ID --alias NAME [--kind board|scope|psu|daq|detector|other]
+labos device list
+labos device show TARGET
+labos device edit TARGET [--fingerprint ID] [--alias NAME] [--kind KIND]
+labos device use TARGET
+labos device remove TARGET
 ```
 
 ## Obsidian desktop UI
@@ -87,7 +94,7 @@ Obsidian panel ─┘
 
 It provides Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, evidence coverage, setup preflight, and versioned Factual/Reviewed/Rigorous handoffs with live progress and cancellation. Reports are derived outputs; they do not implement a second evidence store.
 
-Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). The professional reporting/reliability contract is documented in [`docs/AI_REPORTS.md`](docs/AI_REPORTS.md).
+Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). The professional reporting/reliability contract is documented in [`docs/AI_REPORTS.md`](docs/AI_REPORTS.md). Physical device identity and session resource context are documented in [`docs/DEVICES.md`](docs/DEVICES.md).
 
 ## Design invariants
 

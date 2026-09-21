@@ -296,24 +296,28 @@ def attach_artifact(
         )
 
 
+def _read_events_unlocked(home: Path) -> list[dict[str, Any]]:
+    path = _events_path(home)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"Malformed LabOS event at line {line_number}: {exc}"
+                ) from exc
+    return events
+
+
 def read_events(home: Path) -> list[dict[str, Any]]:
     home = ensure_home(home)
     with ledger_lock(home):
-        path = _events_path(home)
-        if not path.exists():
-            return []
-        events: list[dict[str, Any]] = []
-        with path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError(
-                        f"Malformed LabOS event at line {line_number}: {exc}"
-                    ) from exc
-        return events
+        return _read_events_unlocked(home)
 
 
 def iter_events(home: Path) -> Iterable[dict[str, Any]]:
