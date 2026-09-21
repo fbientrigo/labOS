@@ -76,9 +76,75 @@ The deterministic Session Record derives a per-event resource context only from 
 
 Sessions that predate resources remain valid. Their resource context is simply unrecorded.
 
-## What Phase A does not know
+## Obsidian device interface
 
-Phase A identifies physical units and records when they enter or leave a work session. It does not yet store approved electrical facts such as supply voltage, current limit, polarity, or power profiles. Those require explicit human-approved semantics in a later phase.
+Phase B exposes the resource model as a first-class operational interface in Obsidian:
+
+- **Today** — start/capture work and optionally select devices;
+- **Devices** — search physical units, register/correct identity, open a device-specific page;
+- **Reports** — generate deterministic/AI-reviewed handoffs separately from capture.
+
+During active work the UI shows the current resource context and supports one-click add/remove plus a keyboard-searchable **Replace** action. Replace emits an explicit `resource_remove` followed by `resource_add`; no past event is edited.
+
+A device page shows:
+
+- current identity;
+- whether it is active in the current session;
+- evidence from the current session whose derived resource context contains that device;
+- quick note / WORKING / BROKEN actions when the device is active;
+- explicit empty states for Power and cross-session device state.
+
+A checkpoint is still a session checkpoint. If several resources are active, the event is attributable to all of them according to the recorded context; the UI does not pretend it belongs exclusively to the page currently open.
+
+## Approved facts and Power Profiles
+
+Phase C adds a separate current-knowledge file:
+
+```text
+~/labos-data/device_knowledge.json
+```
+
+This file is **not raw evidence**. It stores only explicit human approvals associated with the stable `resource_id`. Normal observations, notes, checkpoints, reports, and AI output never create or overwrite approved knowledge.
+
+An approved fact contains:
+
+- `fact_id`, `name`, `value`;
+- `approved_at`;
+- `evidence_refs[]`;
+- optional `notes`.
+
+A Power Profile contains:
+
+- `profile_id`, `name`;
+- one or more `rails[]`;
+- `approved_at`;
+- `evidence_refs[]`;
+- optional `notes`.
+
+Each rail contains `label`, `voltage`, `voltage_unit`, `current_limit`, `current_unit`, `polarity`, and optional `typical_draw`. Multiple rails are supported without introducing a general electronics ontology.
+
+Examples:
+
+```bash
+labos device knowledge "Zynq #2"
+
+labos device fact approve "Zynq #2" \
+  --name FPGA --value XC7Z020 \
+  --evidence ev_123
+
+labos device power approve "Zynq #2" \
+  --name "Bench nominal" \
+  --rails-json '[{"label":"VIN","voltage":12,"voltage_unit":"V","current_limit":2,"current_unit":"A","polarity":"center-positive","typical_draw":0.7}]' \
+  --evidence ev_456
+```
+
+Corrections use explicit `fact edit` / `power edit` commands and are treated as human re-approval: the stable fact/profile ID is preserved while `approved_at`, value/configuration, evidence references, and notes are replaced.
+
+The Obsidian device page displays approved Power Profiles and facts with their provenance and exposes explicit **Approve** / **Update configuration** controls.
+
+## What Phase A/B/C do not know
+
+Phase C still does not derive cross-session Last Known Working/Broken, infer physical state from silence, promote observations automatically, or model arbitrary electronics relationships.
 
 Datasheet/PDF AI search is deferred to GitHub issue #4.
 

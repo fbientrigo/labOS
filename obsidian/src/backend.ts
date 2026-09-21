@@ -6,13 +6,19 @@ import { join, resolve } from "path";
 
 import type {
   AgentProvider,
+  ApprovedFact,
   CheckpointState,
+  DeviceKind,
+  DeviceKnowledge,
+  DeviceResource,
   DoctorResult,
   LabOSBackend,
   LabOSEvent,
   LabOSSettings,
   ReportProgress,
   ReportResult,
+  PowerProfile,
+  PowerRail,
   ReportTask,
   SessionRecordResult,
   SessionState,
@@ -141,6 +147,202 @@ export class CliLabOSBackend implements LabOSBackend {
       args.push("--session-id", sessionId);
     }
     return JSON.parse(await this.run("record", args)) as SessionRecordResult;
+  }
+
+  async devices(): Promise<DeviceResource[]> {
+    try {
+      const raw = await readFile(join(this.home(), "resources.json"), "utf8");
+      const parsed = JSON.parse(raw) as { resources?: unknown };
+      if (!Array.isArray(parsed.resources)) {
+        throw new Error("Malformed LabOS resource registry: expected resources list.");
+      }
+      return parsed.resources
+        .filter((item): item is DeviceResource => {
+          if (!item || typeof item !== "object") {
+            return false;
+          }
+          const resource = item as Record<string, unknown>;
+          return (
+            typeof resource.resource_id === "string" &&
+            typeof resource.fingerprint === "string" &&
+            typeof resource.alias === "string" &&
+            typeof resource.kind === "string" &&
+            typeof resource.created_at === "string" &&
+            typeof resource.updated_at === "string"
+          );
+        })
+        .sort((a, b) => {
+          const byAlias = a.alias.localeCompare(b.alias, undefined, {
+            sensitivity: "base",
+          });
+          return byAlias || a.fingerprint.localeCompare(b.fingerprint);
+        });
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async addDevice(input: {
+    fingerprint: string;
+    alias: string;
+    kind: DeviceKind;
+  }): Promise<DeviceResource> {
+    const raw = await this.run("device", [
+      "add",
+      "--fingerprint",
+      input.fingerprint,
+      "--alias",
+      input.alias,
+      "--kind",
+      input.kind,
+    ]);
+    return JSON.parse(raw) as DeviceResource;
+  }
+
+  async editDevice(
+    target: string,
+    changes: { fingerprint?: string; alias?: string; kind?: DeviceKind },
+  ): Promise<DeviceResource> {
+    const args = ["edit", target];
+    if (changes.fingerprint !== undefined) {
+      args.push("--fingerprint", changes.fingerprint);
+    }
+    if (changes.alias !== undefined) {
+      args.push("--alias", changes.alias);
+    }
+    if (changes.kind !== undefined) {
+      args.push("--kind", changes.kind);
+    }
+    return JSON.parse(await this.run("device", args)) as DeviceResource;
+  }
+
+  async useDevice(target: string): Promise<void> {
+    await this.run("device", ["use", target]);
+  }
+
+  async removeDevice(target: string): Promise<void> {
+    await this.run("device", ["remove", target]);
+  }
+
+  async deviceKnowledge(target: string): Promise<DeviceKnowledge> {
+    return JSON.parse(
+      await this.run("device", ["knowledge", target]),
+    ) as DeviceKnowledge;
+  }
+
+  async approveDeviceFact(
+    target: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact> {
+    const args = [
+      "fact",
+      "approve",
+      target,
+      "--name",
+      input.name,
+      "--value",
+      input.value,
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as ApprovedFact;
+  }
+
+  async editDeviceFact(
+    target: string,
+    factId: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact> {
+    const args = [
+      "fact",
+      "edit",
+      target,
+      factId,
+      "--name",
+      input.name,
+      "--value",
+      input.value,
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as ApprovedFact;
+  }
+
+  async approvePowerProfile(
+    target: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile> {
+    const args = [
+      "power",
+      "approve",
+      target,
+      "--name",
+      input.name,
+      "--rails-json",
+      JSON.stringify(input.rails),
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as PowerProfile;
+  }
+
+  async editPowerProfile(
+    target: string,
+    profileId: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile> {
+    const args = [
+      "power",
+      "edit",
+      target,
+      profileId,
+      "--name",
+      input.name,
+      "--rails-json",
+      JSON.stringify(input.rails),
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as PowerProfile;
   }
 
   async doctor(providers?: AgentProvider[]): Promise<DoctorResult> {
