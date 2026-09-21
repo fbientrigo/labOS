@@ -1,5 +1,13 @@
 export type CheckpointState = "working" | "broken";
 export type AgentProvider = "agy" | "codex" | "claude";
+export type ReportMode = "factual" | "reviewed" | "rigorous";
+export type ReportStatus =
+  | "RUNNING"
+  | "FACTUAL"
+  | "VALIDATED"
+  | "REVIEW_REQUIRED"
+  | "FAILED"
+  | "CANCELLED";
 
 export interface LabOSSettings {
   executable: string;
@@ -8,10 +16,14 @@ export interface LabOSSettings {
   defaultWorkdir: string;
   recentLimit: number;
   reportsFolder: string;
+  reportMode: ReportMode;
   reportWorker: AgentProvider;
   reportValidator: AgentProvider;
   reportCritic: AgentProvider;
   reportTimeoutSeconds: number;
+  agyModel: string;
+  codexModel: string;
+  claudeModel: string;
 }
 
 export interface SessionState {
@@ -34,18 +46,90 @@ export interface LabOSEvent {
   payload: Record<string, unknown>;
 }
 
+export interface CoverageItem {
+  id: string;
+  label: string;
+  state: "present" | "absent" | "not_applicable";
+  detail: string;
+}
+
+export interface SessionRecord {
+  record_version: number;
+  session: {
+    session_id: string;
+    project: string | null;
+    label?: string | null;
+    workdir?: string | null;
+    started_at: string;
+    ended_at?: string | null;
+    status: "active" | "ended";
+  };
+  coverage: {
+    items: CoverageItem[];
+    counts: Record<string, number>;
+    absent: string[];
+  };
+  event_aliases: Record<string, string>;
+  allowed_evidence_ids: string[];
+  events: LabOSEvent[];
+}
+
+export interface SessionRecordResult {
+  evidence_sha256: string;
+  record: SessionRecord;
+}
+
+export interface AgentProbe {
+  provider: string;
+  available: boolean;
+  version?: string | null;
+  model?: string | null;
+  model_source?: string;
+  resolved_executable?: string | null;
+}
+
+export interface DoctorResult {
+  labos_version: string;
+  home: string;
+  core_ok: boolean;
+  agents_available: boolean;
+  checks: Array<{ id: string; ok: boolean; detail: string }>;
+  agents: Record<string, AgentProbe>;
+  warnings: string[];
+}
+
+export interface ReportProgress {
+  stage: string;
+  message: string;
+  current: number;
+  total: number;
+  run_id?: string | null;
+  status: ReportStatus;
+  timestamp: string;
+}
+
 export interface ReportResult {
   session_id: string;
+  run_id: string;
+  status: ReportStatus;
+  mode: ReportMode;
+  evidence_sha256: string;
   report_dir: string;
+  session_record: string;
+  generated: string;
+  report: string;
   markdown: string;
   latex: string;
   overleaf_zip: string;
   provenance: string;
-  providers: {
-    worker: AgentProvider;
-    validator: AgentProvider;
-    critic: AgentProvider;
-  };
+  run_manifest: string;
+  providers: Record<string, AgentProvider>;
+  error?: string | null;
+}
+
+export interface ReportTask {
+  promise: Promise<ReportResult>;
+  cancel(): Promise<void>;
 }
 
 export interface LabOSBackend {
@@ -56,14 +140,18 @@ export interface LabOSBackend {
   attach(path: string, kind: "artifact" | "photo"): Promise<void>;
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
-  report(
+  record(sessionId?: string): Promise<SessionRecordResult>;
+  doctor(providers?: AgentProvider[]): Promise<DoctorResult>;
+  startReport(
     outputDir: string,
     options: {
       sessionId?: string;
+      mode: ReportMode;
       worker: AgentProvider;
       validator: AgentProvider;
       critic: AgentProvider;
       timeoutSeconds: number;
     },
-  ): Promise<ReportResult>;
+    onProgress?: (progress: ReportProgress) => void,
+  ): ReportTask;
 }
