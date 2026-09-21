@@ -386,7 +386,7 @@ export class LabOSView extends ItemView {
     const mode = row.createEl("select", { cls: "labos-select" });
     for (const value of ["factual", "reviewed", "rigorous"] as ReportMode[]) {
       const option = mode.createEl("option", {
-        text: value[0].toUpperCase() + value.slice(1),
+        text: value.charAt(0).toUpperCase() + value.slice(1),
         value,
       });
       option.selected = this.plugin.settings.reportMode === value;
