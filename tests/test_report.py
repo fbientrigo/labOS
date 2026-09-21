@@ -315,3 +315,51 @@ def test_agent_failure_keeps_deterministic_fallback(
     assert "deterministic Session Record" in Path(result["report"]).read_text(
         encoding="utf-8"
     )
+
+
+class CancelAfterFirstRunner(FakeRunner):
+    def __init__(self, cancel_path: Path, response: dict) -> None:
+        super().__init__([response])
+        self.cancel_path = cancel_path
+
+    def run(self, provider: str, prompt: str, **kwargs) -> str:
+        result = super().run(provider, prompt, **kwargs)
+        self.cancel_path.write_text("cancel\n", encoding="utf-8")
+        return result
+
+
+def test_cancellation_stops_pipeline_and_preserves_versioned_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    home = tmp_path / "labos"
+    start = start_session(home, "tgc", workdir=work)
+    note = add_note(home, "DMA works")
+    broken = checkpoint(home, "broken", "event loss")
+    cancel_path = tmp_path / "cancel"
+
+    runner = CancelAfterFirstRunner(
+        cancel_path,
+        _candidate(note["id"], broken["id"]),
+    )
+    result = generate_report(
+        home,
+        tmp_path / "reports",
+        session_id=start["session_id"],
+        mode="rigorous",
+        runner=runner,
+        timeout_seconds=123,
+        cancel_path=cancel_path,
+    )
+
+    assert result["status"] == "CANCELLED"
+    assert runner.calls == ["agy"]
+    assert Path(result["session_record"]).is_file()
+    assert Path(result["report"]).is_file()
+    assert Path(result["provenance"]).is_file()
+    assert Path(result["overleaf_zip"]).is_file()
+    manifest = json.loads(Path(result["run_manifest"]).read_text(encoding="utf-8"))
+    assert manifest["status"] == "CANCELLED"
