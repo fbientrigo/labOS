@@ -364,3 +364,43 @@ def test_cancellation_stops_pipeline_and_preserves_versioned_bundle(
     assert Path(result["overleaf_zip"]).is_file()
     manifest = json.loads(Path(result["run_manifest"]).read_text(encoding="utf-8"))
     assert manifest["status"] == "CANCELLED"
+
+
+def test_ambiguous_validator_rejection_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    home = tmp_path / "labos"
+    start = start_session(home, "tgc", workdir=work)
+    note = add_note(home, "DMA works")
+    broken = checkpoint(home, "broken", "event loss")
+    candidate = _candidate(note["id"], broken["id"])
+
+    ambiguous = _approved()
+    ambiguous["approved"] = False
+    ambiguous["issues"] = [
+        {
+            "severity": "error",
+            "section": "report",
+            "reason": "Something is unsupported, but no location was returned.",
+            "evidence_ids": [note["id"]],
+        }
+    ]
+
+    runner = FakeRunner([candidate, ambiguous])
+    result = generate_report(
+        home,
+        tmp_path / "reports",
+        session_id=start["session_id"],
+        mode="reviewed",
+        runner=runner,
+        timeout_seconds=123,
+    )
+
+    assert result["status"] == "FAILED"
+    assert "without locating unsupported content" in (result["error"] or "")
+    assert Path(result["session_record"]).is_file()
+    assert Path(result["report"]).is_file()
