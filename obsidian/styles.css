@@ -256,3 +256,34 @@
 .labos-back {
   width: fit-content;
 }
+
+
+.labos-approved-item {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: var(--size-4-2) 0;
+}
+
+.labos-approved-item:first-of-type {
+  margin-top: var(--size-4-1);
+}
+
+.labos-approved-value {
+  font-weight: var(--font-semibold);
+}
+
+.labos-approved-item .labos-device-form {
+  margin-top: var(--size-4-2);
+}
+
+.labos-power-rail-form {
+  display: grid;
+  grid-template-columns: minmax(90px, 1.4fr) minmax(64px, 0.8fr) minmax(54px, 0.65fr);
+  gap: var(--size-4-1);
+  padding: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+.labos-power-rail-form button {
+  grid-column: 1 / -1;
+}

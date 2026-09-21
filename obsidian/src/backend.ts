@@ -6,8 +6,10 @@ import { join, resolve } from "path";
 
 import type {
   AgentProvider,
+  ApprovedFact,
   CheckpointState,
   DeviceKind,
+  DeviceKnowledge,
   DeviceResource,
   DoctorResult,
   LabOSBackend,
@@ -15,6 +17,8 @@ import type {
   LabOSSettings,
   ReportProgress,
   ReportResult,
+  PowerProfile,
+  PowerRail,
   ReportTask,
   SessionRecordResult,
   SessionState,
@@ -221,6 +225,124 @@ export class CliLabOSBackend implements LabOSBackend {
 
   async removeDevice(target: string): Promise<void> {
     await this.run("device", ["remove", target]);
+  }
+
+  async deviceKnowledge(target: string): Promise<DeviceKnowledge> {
+    return JSON.parse(
+      await this.run("device", ["knowledge", target]),
+    ) as DeviceKnowledge;
+  }
+
+  async approveDeviceFact(
+    target: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact> {
+    const args = [
+      "fact",
+      "approve",
+      target,
+      "--name",
+      input.name,
+      "--value",
+      input.value,
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as ApprovedFact;
+  }
+
+  async editDeviceFact(
+    target: string,
+    factId: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact> {
+    const args = [
+      "fact",
+      "edit",
+      target,
+      factId,
+      "--name",
+      input.name,
+      "--value",
+      input.value,
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as ApprovedFact;
+  }
+
+  async approvePowerProfile(
+    target: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile> {
+    const args = [
+      "power",
+      "approve",
+      target,
+      "--name",
+      input.name,
+      "--rails-json",
+      JSON.stringify(input.rails),
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as PowerProfile;
+  }
+
+  async editPowerProfile(
+    target: string,
+    profileId: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile> {
+    const args = [
+      "power",
+      "edit",
+      target,
+      profileId,
+      "--name",
+      input.name,
+      "--rails-json",
+      JSON.stringify(input.rails),
+    ];
+    for (const ref of input.evidenceRefs) {
+      args.push("--evidence", ref);
+    }
+    if (input.notes) {
+      args.push("--notes", input.notes);
+    }
+    return JSON.parse(await this.run("device", args)) as PowerProfile;
   }
 
   async doctor(providers?: AgentProvider[]): Promise<DoctorResult> {

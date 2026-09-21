@@ -20,6 +20,41 @@ export interface DeviceResource {
   updated_at: string;
 }
 
+export interface ApprovedFact {
+  fact_id: string;
+  name: string;
+  value: string;
+  approved_at: string;
+  evidence_refs: string[];
+  notes?: string | null;
+}
+
+export interface PowerRail {
+  label: string;
+  voltage: number;
+  voltage_unit: string;
+  current_limit: number;
+  current_unit: string;
+  polarity: string;
+  typical_draw?: number;
+}
+
+export interface PowerProfile {
+  profile_id: string;
+  name: string;
+  rails: PowerRail[];
+  approved_at: string;
+  evidence_refs: string[];
+  notes?: string | null;
+}
+
+export interface DeviceKnowledge {
+  knowledge_version: number;
+  resource_id: string;
+  approved_facts: ApprovedFact[];
+  power_profiles: PowerProfile[];
+}
+
 export interface ResourceSnapshot {
   resource_id: string;
   fingerprint?: string | null;
@@ -175,6 +210,45 @@ export interface LabOSBackend {
   ): Promise<DeviceResource>;
   useDevice(target: string): Promise<void>;
   removeDevice(target: string): Promise<void>;
+  deviceKnowledge(target: string): Promise<DeviceKnowledge>;
+  approveDeviceFact(
+    target: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact>;
+  editDeviceFact(
+    target: string,
+    factId: string,
+    input: {
+      name: string;
+      value: string;
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<ApprovedFact>;
+  approvePowerProfile(
+    target: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile>;
+  editPowerProfile(
+    target: string,
+    profileId: string,
+    input: {
+      name: string;
+      rails: PowerRail[];
+      evidenceRefs: string[];
+      notes?: string;
+    },
+  ): Promise<PowerProfile>;
   doctor(providers?: AgentProvider[]): Promise<DoctorResult>;
   startReport(
     outputDir: string,

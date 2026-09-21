@@ -18,6 +18,7 @@ The plugin does **not** implement a second evidence store. It executes the exist
 - attach the current note or another file from the vault;
 - current-session / recent timeline;
 - current-session evidence filtered by physical device;
+- explicit human-approved facts and multi-rail Power Profiles with provenance;
 - command to capture selected editor text;
 - commands for WORKING / BROKEN;
 - configurable LabOS executable, evidence home, default project/workdir, and timeline length;\n- on-demand AI report generation with configurable worker, validator, and critic;\n- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
@@ -83,7 +84,7 @@ The plugin does not rewrite raw evidence. Device writes also call the same CLI a
 
 ```text
 Obsidian panel ─┐
-                ├─> LabOS CLI ─> events.jsonl / resources.json / artifacts
+                ├─> LabOS CLI ─> events.jsonl / resources.json / device_knowledge.json / artifacts
 Terminal ───────┘
 ```
 
@@ -104,6 +105,6 @@ Removing the plugin does not make LabOS data unreadable or unusable.
 
 The **Devices** page is operational rather than a generic CRUD table. A device page shows its alias, physical fingerprint and kind, whether it is part of the current work, current-session evidence, and quick capture/checkpoint actions when active.
 
-Power settings and cross-session Last Known Working are intentionally shown as unrecorded/not indexed until their dedicated evidence models exist. The UI does not infer them from absence of changes.
+Power settings are shown only when a human-approved Power Profile exists. The device page supports explicit approval/re-approval of multi-rail configurations and approved facts, including evidence references and notes. Cross-session Last Known Working remains intentionally unindexed until Phase D. The UI never infers physical state from absence of changes.
 
 When multiple resources are active, notes and WORKING/BROKEN checkpoints created from a device page still belong to the complete active session resource context.

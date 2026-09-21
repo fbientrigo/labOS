@@ -9,9 +9,11 @@ import {
 } from "obsidian";
 import { relative } from "path";
 
+import { renderDeviceKnowledge } from "./device_knowledge";
 import type LabOSPlugin from "./main";
 import type {
   DeviceKind,
+  DeviceKnowledge,
   DeviceResource,
   DoctorResult,
   LabOSEvent,
@@ -236,10 +238,27 @@ export class LabOSView extends ItemView {
         }
       }
 
+      let knowledge: DeviceKnowledge | null = null;
+      let knowledgeError: string | null = null;
+      if (this.page === "devices" && this.selectedDeviceId) {
+        try {
+          knowledge = await backend.deviceKnowledge(this.selectedDeviceId);
+        } catch (error) {
+          knowledgeError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
       if (this.page === "today") {
         this.renderToday(contentEl, session, record, devices, events);
       } else if (this.page === "devices") {
-        this.renderDevices(contentEl, session, record, devices);
+        this.renderDevices(
+          contentEl,
+          session,
+          record,
+          devices,
+          knowledge,
+          knowledgeError,
+        );
       } else {
         this.renderReports(contentEl, session, record);
       }
@@ -645,13 +664,22 @@ export class LabOSView extends ItemView {
     session: SessionState | null,
     record: SessionRecordResult | null,
     devices: DeviceResource[],
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
   ): void {
     const selected = this.selectedDeviceId
       ? devices.find((device) => device.resource_id === this.selectedDeviceId)
       : null;
 
     if (selected) {
-      this.renderDeviceDetail(container, selected, session, record);
+      this.renderDeviceDetail(
+        container,
+        selected,
+        session,
+        record,
+        knowledge,
+        knowledgeError,
+      );
       return;
     }
 
@@ -752,6 +780,8 @@ export class LabOSView extends ItemView {
     device: DeviceResource,
     session: SessionState | null,
     record: SessionRecordResult | null,
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
   ): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
     const back = section.createEl("button", { cls: "labos-back", text: "← Devices" });
@@ -799,13 +829,12 @@ export class LabOSView extends ItemView {
       });
     }
 
-    const power = section.createDiv({ cls: "labos-device-panel" });
-    power.createEl("strong", { text: "POWER" });
-    power.createDiv({ cls: "labos-empty-value", text: "Not recorded" });
-    power.createDiv({
-      cls: "labos-muted",
-      text: "No approved voltage, current limit, polarity, or Power Profile is stored yet.",
-    });
+    this.renderApprovedKnowledge(
+      section,
+      device,
+      knowledge,
+      knowledgeError,
+    );
 
     const working = section.createDiv({ cls: "labos-device-panel" });
     working.createEl("strong", { text: "LAST KNOWN WORKING" });
@@ -871,6 +900,38 @@ export class LabOSView extends ItemView {
         "Absence of a recorded change is not proof that a physical setting remained unchanged.",
     });
 
+  }
+
+  private renderApprovedKnowledge(
+    container: HTMLElement,
+    device: DeviceResource,
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
+  ): void {
+    renderDeviceKnowledge(container, knowledge, knowledgeError, {
+      approveFact: (input) =>
+        this.act(async () => {
+          await this.plugin.getBackend().approveDeviceFact(device.resource_id, input);
+        }),
+      editFact: (factId, input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .editDeviceFact(device.resource_id, factId, input);
+        }),
+      approvePowerProfile: (input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .approvePowerProfile(device.resource_id, input);
+        }),
+      editPowerProfile: (profileId, input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .editPowerProfile(device.resource_id, profileId, input);
+        }),
+    });
   }
 
   private renderEditIdentity(container: HTMLElement, device: DeviceResource): void {
