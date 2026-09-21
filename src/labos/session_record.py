@@ -355,10 +355,10 @@ def render_session_record_markdown(
             source = artifact.get("source_path")
             detail = f"**{alias}** · {artifact.get('name', '')} · {storage}"
             if sha:
-                detail += f" · SHA-256 \`{sha}\`"
+                detail += f" · SHA-256 `{sha}`"
             lines.append(f"- {detail}")
             if source:
-                lines.append(f"  - Source: \`{source}\`")
+                lines.append(f"  - Source: `{source}`")
     else:
         lines.append("_No artifact events recorded._")
 
