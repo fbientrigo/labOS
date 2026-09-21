@@ -273,6 +273,15 @@ def _event_detail(event: dict[str, Any]) -> str:
     return str(kind)
 
 
+def _git_summary(snapshot: dict[str, Any] | None) -> str:
+    if not snapshot or not snapshot.get("available"):
+        return "not available"
+    commit = str(snapshot.get("commit", ""))[:12]
+    branch = str(snapshot.get("branch", ""))
+    dirty = "dirty" if snapshot.get("dirty") else "clean"
+    return f"{branch} @ {commit} · {dirty}"
+
+
 def render_session_record_markdown(
     record: dict[str, Any],
     evidence_sha: str | None = None,
@@ -310,6 +319,26 @@ def render_session_record_markdown(
             f"| {item['label']} | {marker} | {item['detail']} |"
         )
 
+    lines += ["", "## Git snapshots", ""]
+    lines.append(f"- START: {_git_summary(record['git'].get('start'))}")
+    lines.append(f"- END: {_git_summary(record['git'].get('end'))}")
+
+    checkpoint_rows = [
+        ("WORKING", item)
+        for item in record["git"].get("working", [])
+    ] + [
+        ("BROKEN", item)
+        for item in record["git"].get("broken", [])
+    ]
+    if checkpoint_rows:
+        lines += ["", "### Checkpoint snapshots", ""]
+        for state, item in checkpoint_rows:
+            alias = aliases.get(item["event_id"], item["event_id"])
+            lines.append(
+                f"- **{alias} {state}** · {item['timestamp']} · "
+                + _git_summary(item.get("git"))
+            )
+
     lines += ["", "## Timeline", ""]
     for event in record["events"]:
         alias = aliases[event["id"]]
@@ -322,9 +351,14 @@ def render_session_record_markdown(
         for artifact in record["artifacts"]:
             alias = aliases[artifact["event_id"]]
             storage = artifact.get("storage", "reference")
-            lines.append(
-                f"- **{alias}** · {artifact.get('name', '')} · {storage}"
-            )
+            sha = artifact.get("sha256")
+            source = artifact.get("source_path")
+            detail = f"**{alias}** · {artifact.get('name', '')} · {storage}"
+            if sha:
+                detail += f" · SHA-256 \`{sha}\`"
+            lines.append(f"- {detail}")
+            if source:
+                lines.append(f"  - Source: \`{source}\`")
     else:
         lines.append("_No artifact events recorded._")
 
