@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .agents import SUPPORTED_PROVIDERS
+from .doctor import doctor_text, run_doctor
 from .ledger import (
     active_session,
     add_note,
@@ -16,7 +17,12 @@ from .ledger import (
     recent_events,
     start_session,
 )
-from .report import generate_report
+from .report import REPORT_MODES, generate_report
+from .session_record import (
+    build_session_record,
+    evidence_sha256,
+    render_session_record_markdown,
+)
 
 
 def _text(parts: list[str] | None) -> str | None:
@@ -96,16 +102,40 @@ def build_parser() -> argparse.ArgumentParser:
     recent = sub.add_parser("recent", help="Show recent evidence events.")
     recent.add_argument("-n", "--limit", type=int, default=20)
 
+    record = sub.add_parser(
+        "record",
+        help="Build the deterministic Session Record for active/latest work.",
+    )
+    record.add_argument("--session-id")
+    record.add_argument("--json", action="store_true", dest="as_json")
+    record.add_argument("--output", type=Path)
+
+    doctor = sub.add_parser(
+        "doctor",
+        help="Check ledger integrity, locking, and local agent CLI availability.",
+    )
+    doctor.add_argument("--json", action="store_true", dest="as_json")
+    doctor.add_argument(
+        "--provider",
+        action="append",
+        choices=SUPPORTED_PROVIDERS,
+        dest="providers",
+        help="Limit agent preflight to selected provider(s).",
+    )
+
     report = sub.add_parser(
         "report",
-        help="Generate a validated AI advice report for the active/latest session.",
+        help="Generate a versioned factual/reviewed/rigorous report run.",
     )
     report.add_argument("--output-dir", type=Path, required=True)
     report.add_argument("--session-id")
+    report.add_argument("--mode", choices=REPORT_MODES, default="rigorous")
     report.add_argument("--worker", choices=SUPPORTED_PROVIDERS, default="agy")
     report.add_argument("--validator", choices=SUPPORTED_PROVIDERS, default="codex")
     report.add_argument("--critic", choices=SUPPORTED_PROVIDERS, default="claude")
     report.add_argument("--timeout", type=int, default=300)
+    report.add_argument("--progress-file", type=Path)
+    report.add_argument("--cancel-file", type=Path)
 
     return parser
 
@@ -150,15 +180,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "recent":
             for event in recent_events(home, args.limit):
                 print(_short_event(event))
+        elif args.command == "record":
+            record = build_session_record(home, args.session_id)
+            digest = evidence_sha256(record)
+            if args.output:
+                output = args.output.expanduser().resolve()
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    render_session_record_markdown(record, digest),
+                    encoding="utf-8",
+                )
+            if args.as_json:
+                print(
+                    json.dumps(
+                        {"evidence_sha256": digest, "record": record},
+                        sort_keys=True,
+                    )
+                )
+            elif args.output:
+                print(str(output))
+            else:
+                print(render_session_record_markdown(record, digest))
+        elif args.command == "doctor":
+            result = run_doctor(
+                home,
+                providers=args.providers or SUPPORTED_PROVIDERS,
+            )
+            if args.as_json:
+                print(json.dumps(result, sort_keys=True))
+            else:
+                print(doctor_text(result))
         elif args.command == "report":
             result = generate_report(
                 home,
                 args.output_dir,
                 session_id=args.session_id,
+                mode=args.mode,
                 worker=args.worker,
                 validator=args.validator,
                 critic=args.critic,
                 timeout_seconds=args.timeout,
+                progress_path=args.progress_file,
+                cancel_path=args.cancel_file,
             )
             print(json.dumps(result, sort_keys=True))
         else:
