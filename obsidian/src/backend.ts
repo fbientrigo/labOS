@@ -1,15 +1,20 @@
 import { execFile } from "child_process";
-import { readFile } from "fs/promises";
-import { homedir } from "os";
+import { randomUUID } from "crypto";
+import { readFile, unlink, writeFile } from "fs/promises";
+import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 
 import type {
   AgentProvider,
   CheckpointState,
+  DoctorResult,
   LabOSBackend,
   LabOSEvent,
   LabOSSettings,
+  ReportProgress,
   ReportResult,
+  ReportTask,
+  SessionRecordResult,
   SessionState,
 } from "./types";
 
@@ -38,6 +43,23 @@ export class CliLabOSBackend implements LabOSBackend {
     return expandHome(this.settings.home);
   }
 
+  private childEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    const models: Array<[string, string]> = [
+      ["LABOS_AGY_MODEL", this.settings.agyModel],
+      ["LABOS_CODEX_MODEL", this.settings.codexModel],
+      ["LABOS_CLAUDE_MODEL", this.settings.claudeModel],
+    ];
+    for (const [key, value] of models) {
+      if (value.trim()) {
+        env[key] = value.trim();
+      } else {
+        delete env[key];
+      }
+    }
+    return env;
+  }
+
   private run(command: string, args: string[] = []): Promise<string> {
     const cliArgs = ["--home", this.home(), command, ...args];
 
@@ -49,13 +71,14 @@ export class CliLabOSBackend implements LabOSBackend {
           encoding: "utf8",
           windowsHide: true,
           maxBuffer: 4 * 1024 * 1024,
+          env: this.childEnv(),
         },
         (error, stdout, stderr) => {
           if (error) {
             const detail = stderr.trim() || stdout.trim() || error.message;
             rejectRun(
               new Error(
-                `LabOS CLI failed: ${detail}. Check LabOS and agent CLI settings.`,
+                `LabOS CLI failed: ${detail}. Check LabOS and local agent setup.`,
               ),
             );
             return;
@@ -112,19 +135,45 @@ export class CliLabOSBackend implements LabOSBackend {
     await this.run("end", text ? [text] : []);
   }
 
-  async report(
+  async record(sessionId?: string): Promise<SessionRecordResult> {
+    const args = ["--json"];
+    if (sessionId) {
+      args.push("--session-id", sessionId);
+    }
+    return JSON.parse(await this.run("record", args)) as SessionRecordResult;
+  }
+
+  async doctor(providers?: AgentProvider[]): Promise<DoctorResult> {
+    const args = ["--json"];
+    for (const provider of providers ?? []) {
+      args.push("--provider", provider);
+    }
+    return JSON.parse(await this.run("doctor", args)) as DoctorResult;
+  }
+
+  startReport(
     outputDir: string,
     options: {
       sessionId?: string;
+      mode: "factual" | "reviewed" | "rigorous";
       worker: AgentProvider;
       validator: AgentProvider;
       critic: AgentProvider;
       timeoutSeconds: number;
     },
-  ): Promise<ReportResult> {
+    onProgress?: (progress: ReportProgress) => void,
+  ): ReportTask {
+    const token = randomUUID();
+    const progressPath = join(tmpdir(), `labos-report-${token}.progress.json`);
+    const cancelPath = join(tmpdir(), `labos-report-${token}.cancel`);
     const args = [
+      "--home",
+      this.home(),
+      "report",
       "--output-dir",
       outputDir,
+      "--mode",
+      options.mode,
       "--worker",
       options.worker,
       "--validator",
@@ -133,12 +182,93 @@ export class CliLabOSBackend implements LabOSBackend {
       options.critic,
       "--timeout",
       String(options.timeoutSeconds),
+      "--progress-file",
+      progressPath,
+      "--cancel-file",
+      cancelPath,
     ];
     if (options.sessionId) {
       args.push("--session-id", options.sessionId);
     }
-    const raw = await this.run("report", args);
-    return JSON.parse(raw) as ReportResult;
+
+    let cancelled = false;
+    let lastProgress = "";
+    let pollHandle: ReturnType<typeof setInterval> | null = null;
+
+    const cleanup = async (): Promise<void> => {
+      if (pollHandle) {
+        clearInterval(pollHandle);
+        pollHandle = null;
+      }
+      await Promise.all([
+        unlink(progressPath).catch(() => undefined),
+        unlink(cancelPath).catch(() => undefined),
+      ]);
+    };
+
+    const poll = (): void => {
+      void readFile(progressPath, "utf8")
+        .then((raw) => {
+          if (raw === lastProgress) {
+            return;
+          }
+          lastProgress = raw;
+          onProgress?.(JSON.parse(raw) as ReportProgress);
+        })
+        .catch(() => undefined);
+    };
+
+    const promise = new Promise<ReportResult>((resolveReport, rejectReport) => {
+      pollHandle = setInterval(poll, 250);
+      const child = execFile(
+        this.settings.executable,
+        args,
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          maxBuffer: 4 * 1024 * 1024,
+          env: this.childEnv(),
+        },
+        (error, stdout, stderr) => {
+          poll();
+          void cleanup().then(() => {
+            if (error) {
+              const detail = stderr.trim() || stdout.trim() || error.message;
+              rejectReport(
+                new Error(
+                  cancelled
+                    ? "Report cancellation did not complete cleanly."
+                    : `LabOS report failed: ${detail}`,
+                ),
+              );
+              return;
+            }
+            try {
+              resolveReport(JSON.parse(stdout.trim()) as ReportResult);
+            } catch (parseError) {
+              rejectReport(
+                new Error(
+                  `LabOS returned an invalid report result: ${String(parseError)}`,
+                ),
+              );
+            }
+          });
+        },
+      );
+
+      child.on("error", (error) => {
+        void cleanup();
+        rejectReport(error);
+      });
+    });
+
+    return {
+      promise,
+      cancel: async () => {
+        cancelled = true;
+        await writeFile(cancelPath, "cancel\n", "utf8");
+      },
+    };
   }
 
   async recent(limit: number): Promise<LabOSEvent[]> {
@@ -151,7 +281,8 @@ export class CliLabOSBackend implements LabOSBackend {
         try {
           events.push(JSON.parse(line) as LabOSEvent);
         } catch {
-          // One malformed historical line should not make the capture UI unusable.
+          // Core reads fail closed; this display helper ignores a single malformed
+          // historical line so the panel can still surface the Doctor action.
         }
       }
 
