@@ -9,8 +9,12 @@ import {
 } from "obsidian";
 import { relative } from "path";
 
+import { renderDeviceKnowledge } from "./device_knowledge";
 import type LabOSPlugin from "./main";
 import type {
+  DeviceKind,
+  DeviceKnowledge,
+  DeviceResource,
   DoctorResult,
   LabOSEvent,
   ReportMode,
@@ -21,6 +25,17 @@ import type {
 } from "./types";
 
 export const VIEW_TYPE_LABOS = "labos-active-session";
+
+type LabOSPage = "today" | "devices" | "reports";
+
+const DEVICE_KINDS: DeviceKind[] = [
+  "board",
+  "scope",
+  "psu",
+  "daq",
+  "detector",
+  "other",
+];
 
 function payloadString(event: LabOSEvent, key: string): string {
   const value = event.payload[key];
@@ -34,19 +49,24 @@ function eventText(event: LabOSEvent): string {
   if (event.type === "checkpoint") {
     const state = payloadString(event, "state").toUpperCase();
     const text = payloadString(event, "text");
-    return text ? `${state} — ${text}` : state;
+    return text ? state + " — " + text : state;
   }
   if (event.type === "artifact") {
     const kind = payloadString(event, "kind") || "artifact";
-    return `${kind}: ${payloadString(event, "name")}`;
+    return kind + ": " + payloadString(event, "name");
   }
   if (event.type === "session_start") {
     const label = payloadString(event, "label");
-    return label ? `START — ${label}` : "START";
+    return label ? "START — " + label : "START";
   }
   if (event.type === "session_end") {
     const text = payloadString(event, "text");
-    return text ? `END — ${text}` : "END";
+    return text ? "END — " + text : "END";
+  }
+  if (event.type === "resource_add" || event.type === "resource_remove") {
+    const action = event.type === "resource_add" ? "DEVICE ADDED" : "DEVICE REMOVED";
+    const alias = payloadString(event, "alias") || payloadString(event, "resource_id");
+    return action + (alias ? " — " + alias : "");
   }
   return event.type;
 }
@@ -57,6 +77,14 @@ function eventTime(timestamp: string): string {
     return timestamp;
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function eventDateTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+  return date.toLocaleString();
 }
 
 function isPhoto(file: TFile): boolean {
@@ -73,6 +101,14 @@ function modeDescription(mode: ReportMode): string {
     return "Worker → validator";
   }
   return "Worker → validator → critic → revision → final validator";
+}
+
+function activeResourceIds(record: SessionRecordResult | null): Set<string> {
+  return new Set(
+    (record?.record.resource_context?.active_at_end ?? []).map(
+      (resource) => resource.resource_id,
+    ),
+  );
 }
 
 class VaultFilePicker extends FuzzySuggestModal<TFile> {
@@ -97,10 +133,43 @@ class VaultFilePicker extends FuzzySuggestModal<TFile> {
   }
 }
 
+class DevicePicker extends FuzzySuggestModal<DeviceResource> {
+  constructor(
+    app: LabOSView["app"],
+    private readonly devices: DeviceResource[],
+    private readonly choose: (device: DeviceResource) => void,
+    placeholder = "Choose a device...",
+  ) {
+    super(app);
+    this.setPlaceholder(placeholder);
+  }
+
+  getItems(): DeviceResource[] {
+    return this.devices;
+  }
+
+  getItemText(device: DeviceResource): string {
+    return device.alias + " · " + device.fingerprint + " · " + device.kind;
+  }
+
+  onChooseItem(device: DeviceResource): void {
+    this.choose(device);
+  }
+}
+
 export class LabOSView extends ItemView {
   private reportTask: ReportTask | null = null;
   private reportProgress: ReportProgress | null = null;
+  private reportControls: {
+    button: HTMLButtonElement;
+    progress: HTMLElement;
+    idleLabel: string;
+  } | null = null;
   private doctorResult: DoctorResult | null = null;
+  private page: LabOSPage = "today";
+  private selectedDeviceId: string | null = null;
+  private preselectedStartDeviceIds = new Set<string>();
+  private deviceRegistryError: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -127,10 +196,80 @@ export class LabOSView extends ItemView {
 
   async refresh(): Promise<void> {
     const { contentEl } = this;
+    this.reportControls = null;
     contentEl.empty();
     contentEl.addClass("labos-view");
 
-    const header = contentEl.createDiv({ cls: "labos-header labos-topbar" });
+    this.renderHeader(contentEl);
+    this.renderNavigation(contentEl);
+    this.renderDoctorStatus(contentEl);
+
+    try {
+      const backend = this.plugin.getBackend();
+      const [session, events] = await Promise.all([
+        backend.status(),
+        backend.recent(this.plugin.settings.recentLimit),
+      ]);
+
+      let devices: DeviceResource[] = [];
+      this.deviceRegistryError = null;
+      try {
+        devices = await backend.devices();
+      } catch (error) {
+        this.deviceRegistryError =
+          error instanceof Error ? error.message : String(error);
+      }
+
+      if (this.deviceRegistryError) {
+        contentEl.createDiv({
+          cls: "labos-warning",
+          text:
+            "Device registry unavailable. Evidence capture remains available. " +
+            this.deviceRegistryError,
+        });
+      }
+
+      let record: SessionRecordResult | null = null;
+      if (session) {
+        try {
+          record = await backend.record(session.session_id);
+        } catch {
+          // Capture remains usable if a derived view is temporarily unavailable.
+        }
+      }
+
+      let knowledge: DeviceKnowledge | null = null;
+      let knowledgeError: string | null = null;
+      if (this.page === "devices" && this.selectedDeviceId) {
+        try {
+          knowledge = await backend.deviceKnowledge(this.selectedDeviceId);
+        } catch (error) {
+          knowledgeError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      if (this.page === "today") {
+        this.renderToday(contentEl, session, record, devices, events);
+      } else if (this.page === "devices") {
+        this.renderDevices(
+          contentEl,
+          session,
+          record,
+          devices,
+          knowledge,
+          knowledgeError,
+        );
+      } else {
+        this.renderReports(contentEl, session, record);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      contentEl.createDiv({ cls: "labos-error", text: message });
+    }
+  }
+
+  private renderHeader(container: HTMLElement): void {
+    const header = container.createDiv({ cls: "labos-header labos-topbar" });
 
     const brand = header.createEl("button", {
       cls: "labos-brand-button",
@@ -145,7 +284,7 @@ export class LabOSView extends ItemView {
       attr: { "aria-hidden": "true" },
     });
     for (let index = 1; index <= 4; index += 1) {
-      mark.createSpan({ cls: `labos-memory-core-segment segment-${index}` });
+      mark.createSpan({ cls: "labos-memory-core-segment segment-" + String(index) });
     }
     mark.createSpan({ cls: "labos-memory-core-center" });
     mark.createSpan({ cls: "labos-memory-core-state" });
@@ -171,33 +310,26 @@ export class LabOSView extends ItemView {
     refreshButton.addEventListener("click", () => {
       void this.refresh();
     });
+  }
 
-    this.renderDoctorStatus(contentEl);
-
-    try {
-      const backend = this.plugin.getBackend();
-      const session = await backend.status();
-      let record: SessionRecordResult | null = null;
-
-      if (session) {
-        try {
-          record = await backend.record(session.session_id);
-        } catch {
-          // Keep capture usable even when derived display data has a problem.
+  private renderNavigation(container: HTMLElement): void {
+    const nav = container.createDiv({ cls: "labos-nav" });
+    for (const [page, label] of [
+      ["today", "Today"],
+      ["devices", "Devices"],
+      ["reports", "Reports"],
+    ] as Array<[LabOSPage, string]>) {
+      const button = nav.createEl("button", {
+        cls: this.page === page ? "labos-nav-active" : "",
+        text: label,
+      });
+      button.addEventListener("click", () => {
+        this.page = page;
+        if (page !== "devices") {
+          this.selectedDeviceId = null;
         }
-        this.renderActiveSession(contentEl, session);
-        if (record) {
-          this.renderCoverage(contentEl, record);
-        }
-      } else {
-        this.renderStart(contentEl);
-      }
-
-      const events = await backend.recent(this.plugin.settings.recentLimit);
-      this.renderTimeline(contentEl, events, session);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      contentEl.createDiv({ cls: "labos-error", text: message });
+        void this.refresh();
+      });
     }
   }
 
@@ -208,10 +340,10 @@ export class LabOSView extends ItemView {
     const row = container.createDiv({ cls: "labos-status-line" });
     row.createSpan({
       cls: this.doctorResult.core_ok ? "labos-ok" : "labos-error",
-      text: `Core: ${this.doctorResult.core_ok ? "OK" : "FAIL"}`,
+      text: "Core: " + (this.doctorResult.core_ok ? "OK" : "FAIL"),
     });
     const agentSummary = Object.entries(this.doctorResult.agents)
-      .map(([name, probe]) => `${name}:${probe.available ? "OK" : "missing"}`)
+      .map(([name, probe]) => name + ":" + (probe.available ? "OK" : "missing"))
       .join(" · ");
     row.createSpan({ cls: "labos-event-time", text: agentSummary });
   }
@@ -229,7 +361,7 @@ export class LabOSView extends ItemView {
         new Notice("LabOS core preflight failed. See panel status.", 10000);
       } else if (missing.length) {
         new Notice(
-          `Core OK. Missing optional agent CLI(s): ${missing.join(", ")}.`,
+          "Core OK. Missing optional agent CLI(s): " + missing.join(", ") + ".",
           10000,
         );
       } else {
@@ -245,7 +377,25 @@ export class LabOSView extends ItemView {
     }
   }
 
-  private renderStart(container: HTMLElement): void {
+  private renderToday(
+    container: HTMLElement,
+    session: SessionState | null,
+    record: SessionRecordResult | null,
+    devices: DeviceResource[],
+    events: LabOSEvent[],
+  ): void {
+    if (session) {
+      this.renderActiveSession(container, session, record, devices);
+      if (record) {
+        this.renderCoverage(container, record);
+      }
+    } else {
+      this.renderStart(container, devices);
+    }
+    this.renderTimeline(container, events, session);
+  }
+
+  private renderStart(container: HTMLElement, devices: DeviceResource[]): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
     section.createEl("h3", { text: "Start work" });
 
@@ -266,6 +416,66 @@ export class LabOSView extends ItemView {
     });
     workdir.value = this.plugin.settings.defaultWorkdir;
 
+    const selected = new Set(this.preselectedStartDeviceIds);
+    this.preselectedStartDeviceIds.clear();
+
+    const deviceBlock = section.createDiv({ cls: "labos-device-picker-block" });
+    deviceBlock.createEl("strong", { text: "Devices in this work" });
+    deviceBlock.createDiv({
+      cls: "labos-muted",
+      text: "Optional. Start remains valid with no devices selected.",
+    });
+
+    if (devices.length === 0) {
+      const empty = deviceBlock.createDiv({ cls: "labos-empty-state" });
+      empty.createDiv({ text: "No devices registered yet." });
+      const go = empty.createEl("button", { text: "Register a device" });
+      go.addEventListener("click", () => {
+        this.page = "devices";
+        void this.refresh();
+      });
+    } else {
+      const search = deviceBlock.createEl("input", {
+        cls: "labos-input",
+        attr: { placeholder: "Filter devices..." },
+      });
+      const list = deviceBlock.createDiv({ cls: "labos-device-checklist" });
+
+      const draw = (): void => {
+        list.empty();
+        const query = search.value.trim().toLocaleLowerCase();
+        const visible = devices.filter((device) =>
+          [device.alias, device.fingerprint, device.kind]
+            .join(" ")
+            .toLocaleLowerCase()
+            .includes(query),
+        );
+        for (const device of visible) {
+          const labelEl = list.createEl("label", { cls: "labos-device-choice" });
+          const checkbox = labelEl.createEl("input", { type: "checkbox" });
+          checkbox.checked = selected.has(device.resource_id);
+          checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+              selected.add(device.resource_id);
+            } else {
+              selected.delete(device.resource_id);
+            }
+          });
+          const text = labelEl.createDiv();
+          text.createDiv({ text: device.alias });
+          text.createDiv({
+            cls: "labos-muted",
+            text: device.fingerprint + " · " + device.kind,
+          });
+        }
+        if (visible.length === 0) {
+          list.createDiv({ cls: "labos-muted", text: "No matching devices." });
+        }
+      };
+      search.addEventListener("input", draw);
+      draw();
+    }
+
     const start = section.createEl("button", { text: "Start" });
     start.addEventListener("click", () => {
       const projectValue = project.value.trim();
@@ -275,21 +485,38 @@ export class LabOSView extends ItemView {
         return;
       }
       void this.act(async () => {
-        await this.plugin.getBackend().start(
+        const backend = this.plugin.getBackend();
+        await backend.start(
           projectValue,
           label.value.trim() || undefined,
           workdir.value.trim() || undefined,
         );
-        new Notice(`LabOS started: ${projectValue}`);
+        const failures: string[] = [];
+        for (const resourceId of selected) {
+          try {
+            await backend.useDevice(resourceId);
+          } catch (error) {
+            failures.push(
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        if (failures.length) {
+          throw new Error(
+            "Session started, but some device associations failed: " +
+              failures.join(" | "),
+          );
+        }
+        new Notice("LabOS started: " + projectValue);
       });
     });
-
-    this.renderReportControls(section, undefined, "Generate last report");
   }
 
   private renderActiveSession(
     container: HTMLElement,
     session: SessionState,
+    record: SessionRecordResult | null,
+    devices: DeviceResource[],
   ): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
 
@@ -299,7 +526,7 @@ export class LabOSView extends ItemView {
     }
     section.createDiv({
       cls: "labos-event-time",
-      text: `Started ${new Date(session.started_at).toLocaleString()}`,
+      text: "Started " + new Date(session.started_at).toLocaleString(),
     });
     if (session.started_cwd) {
       section.createDiv({
@@ -307,6 +534,8 @@ export class LabOSView extends ItemView {
         text: session.started_cwd,
       });
     }
+
+    this.renderActiveDevices(section, record, devices);
 
     const capture = section.createEl("textarea", {
       cls: "labos-textarea",
@@ -356,8 +585,6 @@ export class LabOSView extends ItemView {
       }).open();
     });
 
-    this.renderReportControls(section, session.session_id, "Generate report");
-
     const end = section.createEl("button", { text: "End work" });
     end.addEventListener("click", () => {
       void this.act(async () => {
@@ -365,6 +592,459 @@ export class LabOSView extends ItemView {
         new Notice("LabOS session ended.");
       });
     });
+  }
+
+  private renderActiveDevices(
+    container: HTMLElement,
+    record: SessionRecordResult | null,
+    devices: DeviceResource[],
+  ): void {
+    const block = container.createDiv({ cls: "labos-active-devices" });
+    const head = block.createDiv({ cls: "labos-header" });
+    head.createEl("strong", { text: "Devices in this work" });
+
+    const activeSnapshots = record?.record.resource_context?.active_at_end ?? [];
+    const activeIds = new Set(activeSnapshots.map((item) => item.resource_id));
+
+    const add = head.createEl("button", { text: "+ Add device" });
+    add.disabled = devices.every((device) => activeIds.has(device.resource_id));
+    add.addEventListener("click", () => {
+      const available = devices.filter(
+        (device) => !activeIds.has(device.resource_id),
+      );
+      new DevicePicker(
+        this.app,
+        available,
+        (device) => {
+          void this.act(async () => {
+            await this.plugin.getBackend().useDevice(device.resource_id);
+          });
+        },
+        "Add a device to this work...",
+      ).open();
+    });
+
+    if (activeSnapshots.length === 0) {
+      block.createDiv({
+        cls: "labos-muted",
+        text: "No device context recorded for this work.",
+      });
+      return;
+    }
+
+    for (const snapshot of activeSnapshots) {
+      const current =
+        devices.find((device) => device.resource_id === snapshot.resource_id) ??
+        null;
+      const row = block.createDiv({ cls: "labos-active-device-row" });
+      const identity = row.createDiv({ cls: "labos-device-identity" });
+      identity.createDiv({
+        text: current?.alias || snapshot.alias || snapshot.resource_id,
+      });
+      identity.createDiv({
+        cls: "labos-muted",
+        text:
+          (current?.fingerprint || snapshot.fingerprint || "unknown fingerprint") +
+          (current?.kind || snapshot.kind
+            ? " · " + (current?.kind || snapshot.kind)
+            : ""),
+      });
+
+      const actions = row.createDiv({ cls: "labos-actions" });
+      const replace = actions.createEl("button", { text: "Replace" });
+      replace.disabled = devices.every((device) => activeIds.has(device.resource_id));
+      replace.addEventListener("click", () => {
+        const available = devices.filter(
+          (device) => !activeIds.has(device.resource_id),
+        );
+        new DevicePicker(
+          this.app,
+          available,
+          (next) => {
+            void this.act(async () => {
+              const backend = this.plugin.getBackend();
+              await backend.removeDevice(snapshot.resource_id);
+              try {
+                await backend.useDevice(next.resource_id);
+              } catch (error) {
+                new Notice(
+                  "Previous device was removed, but replacement could not be added.",
+                  10000,
+                );
+                throw error;
+              }
+            });
+          },
+          "Replace with...",
+        ).open();
+      });
+
+      const remove = actions.createEl("button", { text: "Remove" });
+      remove.addEventListener("click", () => {
+        void this.act(async () => {
+          await this.plugin.getBackend().removeDevice(snapshot.resource_id);
+        });
+      });
+    }
+  }
+
+  private renderDevices(
+    container: HTMLElement,
+    session: SessionState | null,
+    record: SessionRecordResult | null,
+    devices: DeviceResource[],
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
+  ): void {
+    const selected = this.selectedDeviceId
+      ? devices.find((device) => device.resource_id === this.selectedDeviceId)
+      : null;
+
+    if (selected) {
+      this.renderDeviceDetail(
+        container,
+        selected,
+        session,
+        record,
+        knowledge,
+        knowledgeError,
+      );
+      return;
+    }
+
+    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const title = section.createDiv({ cls: "labos-header" });
+    title.createEl("h2", { text: "Devices" });
+    title.createSpan({
+      cls: "labos-muted",
+      text: String(devices.length) + " registered",
+    });
+
+    this.renderRegisterDevice(section);
+
+    if (devices.length === 0) {
+      section.createDiv({
+        cls: "labos-empty-state",
+        text: "No devices registered. Add the physical fingerprint and a short alias.",
+      });
+      return;
+    }
+
+    const search = section.createEl("input", {
+      cls: "labos-input",
+      attr: { placeholder: "Search alias or fingerprint..." },
+    });
+    const list = section.createDiv({ cls: "labos-device-list" });
+
+    const draw = (): void => {
+      list.empty();
+      const query = search.value.trim().toLocaleLowerCase();
+      const visible = devices.filter((device) =>
+        [device.alias, device.fingerprint, device.kind]
+          .join(" ")
+          .toLocaleLowerCase()
+          .includes(query),
+      );
+
+      for (const device of visible) {
+        const card = list.createEl("button", { cls: "labos-device-card" });
+        const left = card.createDiv({ cls: "labos-device-identity" });
+        left.createDiv({ cls: "labos-device-name", text: device.alias });
+        left.createDiv({ cls: "labos-device-fingerprint", text: device.fingerprint });
+        card.createSpan({ cls: "labos-device-kind", text: device.kind });
+        card.addEventListener("click", () => {
+          this.selectedDeviceId = device.resource_id;
+          void this.refresh();
+        });
+      }
+
+      if (visible.length === 0) {
+        list.createDiv({ cls: "labos-muted", text: "No matching devices." });
+      }
+    };
+    search.addEventListener("input", draw);
+    draw();
+  }
+
+  private renderRegisterDevice(container: HTMLElement): void {
+    const details = container.createEl("details", { cls: "labos-device-form" });
+    details.createEl("summary", { text: "Register device" });
+    const form = details.createDiv({ cls: "labos-stack" });
+
+    const fingerprint = form.createEl("input", {
+      cls: "labos-input",
+      attr: { placeholder: "Fingerprint / serial / asset / JTAG ID" },
+    });
+    const alias = form.createEl("input", {
+      cls: "labos-input",
+      attr: { placeholder: "Alias, e.g. Zynq #2" },
+    });
+    const kind = form.createEl("select", { cls: "labos-select" });
+    for (const value of DEVICE_KINDS) {
+      kind.createEl("option", { value, text: value });
+    }
+
+    const add = form.createEl("button", { text: "Add device" });
+    add.addEventListener("click", () => {
+      const fp = fingerprint.value.trim();
+      const name = alias.value.trim();
+      if (!fp || !name) {
+        new Notice("Fingerprint and alias are required.");
+        return;
+      }
+      void this.act(async () => {
+        const device = await this.plugin.getBackend().addDevice({
+          fingerprint: fp,
+          alias: name,
+          kind: kind.value as DeviceKind,
+        });
+        this.selectedDeviceId = device.resource_id;
+        new Notice("Device registered: " + device.alias);
+      });
+    });
+  }
+
+  private renderDeviceDetail(
+    container: HTMLElement,
+    device: DeviceResource,
+    session: SessionState | null,
+    record: SessionRecordResult | null,
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
+  ): void {
+    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const back = section.createEl("button", { cls: "labos-back", text: "← Devices" });
+    back.addEventListener("click", () => {
+      this.selectedDeviceId = null;
+      void this.refresh();
+    });
+
+    const hero = section.createDiv({ cls: "labos-device-hero" });
+    hero.createEl("h2", { text: device.alias.toUpperCase() });
+    hero.createDiv({ cls: "labos-device-fingerprint", text: device.fingerprint });
+    hero.createDiv({ cls: "labos-device-kind", text: device.kind });
+
+    this.renderEditIdentity(section, device);
+
+    const activeIds = activeResourceIds(record);
+    const isActive = activeIds.has(device.resource_id);
+
+    const workCard = section.createDiv({ cls: "labos-device-panel" });
+    workCard.createEl("strong", { text: "CURRENT WORK" });
+    if (session && isActive) {
+      workCard.createDiv({ text: "In use · " + session.project });
+      if (session.label) {
+        workCard.createDiv({ cls: "labos-muted", text: session.label });
+      }
+    } else if (session) {
+      workCard.createDiv({
+        cls: "labos-muted",
+        text: "Not currently associated with " + session.project + ".",
+      });
+      const use = workCard.createEl("button", { text: "Use in current work" });
+      use.addEventListener("click", () => {
+        void this.act(async () => {
+          await this.plugin.getBackend().useDevice(device.resource_id);
+        });
+      });
+    } else {
+      workCard.createDiv({ cls: "labos-muted", text: "No active session." });
+      const start = workCard.createEl("button", { text: "Start work with this device" });
+      start.addEventListener("click", () => {
+        this.preselectedStartDeviceIds = new Set([device.resource_id]);
+        this.page = "today";
+        this.selectedDeviceId = null;
+        void this.refresh();
+      });
+    }
+
+    this.renderApprovedKnowledge(
+      section,
+      device,
+      knowledge,
+      knowledgeError,
+    );
+
+    const working = section.createDiv({ cls: "labos-device-panel" });
+    working.createEl("strong", { text: "LAST KNOWN WORKING" });
+    working.createDiv({ cls: "labos-empty-value", text: "Not indexed yet" });
+    working.createDiv({
+      cls: "labos-muted",
+      text: "LabOS will derive cross-session device state from recorded checkpoints in Phase D.",
+    });
+
+    const latest = section.createDiv({ cls: "labos-device-panel" });
+    latest.createEl("strong", { text: "LATEST STATE" });
+    latest.createDiv({ cls: "labos-empty-value", text: "Not indexed yet" });
+    latest.createDiv({
+      cls: "labos-muted",
+      text: "No physical state is inferred from missing evidence.",
+    });
+
+    if (record) {
+      this.renderDeviceCurrentEvidence(section, device, record);
+    }
+
+    if (session && isActive && record) {
+      section.createDiv({
+        cls: "labos-muted",
+        text:
+          "Notes and checkpoints use the complete active resource context. " +
+          "If other devices are active, this evidence is attributable to them too.",
+      });
+
+      const capture = section.createEl("textarea", {
+        cls: "labos-textarea",
+        attr: { placeholder: "Note about " + device.alias + "..." },
+      });
+      const actions = section.createDiv({ cls: "labos-actions" });
+      const note = actions.createEl("button", { text: "Add note" });
+      note.addEventListener("click", () => {
+        void this.captureNote(capture);
+      });
+      const good = actions.createEl("button", { text: "✓ Working" });
+      good.addEventListener("click", () => {
+        void this.captureCheckpoint("working", capture);
+      });
+      const bad = actions.createEl("button", { text: "✗ Broken" });
+      bad.addEventListener("click", () => {
+        void this.captureCheckpoint("broken", capture);
+      });
+    }
+
+    const context = section.createDiv({ cls: "labos-device-panel" });
+    context.createEl("strong", { text: "IDENTITY" });
+    context.createDiv({
+      cls: "labos-muted",
+      text:
+        "LabOS ID " +
+        device.resource_id +
+        " · created " +
+        eventDateTime(device.created_at),
+    });
+    context.createDiv({
+      cls: "labos-warning",
+      text:
+        "LabOS only knows physical state that was explicitly recorded or approved. " +
+        "Absence of a recorded change is not proof that a physical setting remained unchanged.",
+    });
+
+  }
+
+  private renderApprovedKnowledge(
+    container: HTMLElement,
+    device: DeviceResource,
+    knowledge: DeviceKnowledge | null,
+    knowledgeError: string | null,
+  ): void {
+    renderDeviceKnowledge(container, knowledge, knowledgeError, {
+      approveFact: (input) =>
+        this.act(async () => {
+          await this.plugin.getBackend().approveDeviceFact(device.resource_id, input);
+        }),
+      editFact: (factId, input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .editDeviceFact(device.resource_id, factId, input);
+        }),
+      approvePowerProfile: (input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .approvePowerProfile(device.resource_id, input);
+        }),
+      editPowerProfile: (profileId, input) =>
+        this.act(async () => {
+          await this.plugin
+            .getBackend()
+            .editPowerProfile(device.resource_id, profileId, input);
+        }),
+    });
+  }
+
+  private renderEditIdentity(container: HTMLElement, device: DeviceResource): void {
+    const details = container.createEl("details", { cls: "labos-device-form" });
+    details.createEl("summary", { text: "Edit identity" });
+    const form = details.createDiv({ cls: "labos-stack" });
+
+    const alias = form.createEl("input", { cls: "labos-input" });
+    alias.value = device.alias;
+    const fingerprint = form.createEl("input", { cls: "labos-input" });
+    fingerprint.value = device.fingerprint;
+    const kind = form.createEl("select", { cls: "labos-select" });
+    for (const value of DEVICE_KINDS) {
+      const option = kind.createEl("option", { value, text: value });
+      option.selected = device.kind === value;
+    }
+
+    const save = form.createEl("button", { text: "Save identity" });
+    save.addEventListener("click", () => {
+      void this.act(async () => {
+        await this.plugin.getBackend().editDevice(device.resource_id, {
+          alias: alias.value.trim(),
+          fingerprint: fingerprint.value.trim(),
+          kind: kind.value as DeviceKind,
+        });
+        new Notice("Device identity updated.");
+      });
+    });
+  }
+
+  private renderDeviceCurrentEvidence(
+    container: HTMLElement,
+    device: DeviceResource,
+    record: SessionRecordResult,
+  ): void {
+    const block = container.createDiv({ cls: "labos-device-panel" });
+    block.createEl("strong", { text: "EVIDENCE IN CURRENT WORK" });
+
+    const byEvent = record.record.resource_context?.by_event ?? {};
+    const relevant = record.record.events.filter((event) =>
+      (byEvent[event.id] ?? []).some(
+        (resource) => resource.resource_id === device.resource_id,
+      ),
+    );
+
+    if (relevant.length === 0) {
+      block.createDiv({ cls: "labos-muted", text: "No evidence yet." });
+      return;
+    }
+
+    for (const event of relevant.slice(-8).reverse()) {
+      const row = block.createDiv({ cls: "labos-event" });
+      const head = row.createDiv({ cls: "labos-event-head" });
+      head.createSpan({
+        cls: "labos-event-kind",
+        text: event.type.replaceAll("_", " "),
+      });
+      head.createSpan({ cls: "labos-event-time", text: eventTime(event.timestamp) });
+      row.createDiv({ text: eventText(event) });
+    }
+  }
+
+  private renderReports(
+    container: HTMLElement,
+    session: SessionState | null,
+    record: SessionRecordResult | null,
+  ): void {
+    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    section.createEl("h2", { text: "Reports" });
+    section.createDiv({
+      cls: "labos-muted",
+      text:
+        "Reports are derived from deterministic Session Records. They never replace raw evidence.",
+    });
+
+    this.renderReportControls(
+      section,
+      session?.session_id,
+      session ? "Generate current report" : "Generate last report",
+    );
+
+    if (record) {
+      this.renderCoverage(section, record);
+    }
   }
 
   private renderCoverage(
@@ -430,7 +1110,8 @@ export class LabOSView extends ItemView {
       text: this.reportTask ? "Cancel report" : label,
     });
     const progress = block.createDiv({ cls: "labos-progress" });
-    this.updateProgressDisplay(progress, button, label);
+    this.reportControls = { button, progress, idleLabel: label };
+    this.updateProgressDisplay();
 
     button.addEventListener("click", () => {
       if (this.reportTask) {
@@ -438,13 +1119,7 @@ export class LabOSView extends ItemView {
         void this.reportTask.cancel();
         return;
       }
-      void this.generateReport(
-        button,
-        progress,
-        mode.value as ReportMode,
-        sessionId,
-        label,
-      );
+      void this.generateReport(mode.value as ReportMode, sessionId);
     });
 
     block.createDiv({
@@ -453,25 +1128,25 @@ export class LabOSView extends ItemView {
     });
   }
 
-  private updateProgressDisplay(
-    progressEl: HTMLElement,
-    button: HTMLButtonElement,
-    idleLabel: string,
-  ): void {
-    progressEl.empty();
+  private updateProgressDisplay(): void {
+    const controls = this.reportControls;
+    if (!controls) {
+      return;
+    }
+    controls.progress.empty();
     if (!this.reportProgress) {
-      if (!this.reportTask) {
-        button.setText(idleLabel);
-      }
+      controls.button.setText(
+        this.reportTask ? "Cancel report" : controls.idleLabel,
+      );
       return;
     }
     const p = this.reportProgress;
-    progressEl.createDiv({
-      text: `${p.current}/${p.total} · ${p.message}`,
+    controls.progress.createDiv({
+      text: String(p.current) + "/" + String(p.total) + " · " + p.message,
     });
-    if (this.reportTask) {
-      button.setText(`Cancel · ${p.stage}`);
-    }
+    controls.button.setText(
+      this.reportTask ? "Cancel · " + p.stage : controls.idleLabel,
+    );
   }
 
   private async captureNote(textarea: HTMLTextAreaElement): Promise<void> {
@@ -508,16 +1183,13 @@ export class LabOSView extends ItemView {
       await this.plugin
         .getBackend()
         .attach(fullPath, isPhoto(file) ? "photo" : "artifact");
-      new Notice(`Attached: ${file.name}`);
+      new Notice("Attached: " + file.name);
     });
   }
 
   private async generateReport(
-    button: HTMLButtonElement,
-    progressEl: HTMLElement,
     mode: ReportMode,
     sessionId: string | undefined,
-    idleLabel: string,
   ): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
@@ -553,11 +1225,11 @@ export class LabOSView extends ItemView {
       },
       (next) => {
         this.reportProgress = next;
-        this.updateProgressDisplay(progressEl, button, idleLabel);
+        this.updateProgressDisplay();
       },
     );
     this.reportTask = task;
-    this.updateProgressDisplay(progressEl, button, idleLabel);
+    this.updateProgressDisplay();
 
     try {
       const result = await task.promise;
@@ -581,7 +1253,7 @@ export class LabOSView extends ItemView {
               : "AI failed; factual fallback preserved";
 
       new Notice(
-        `LabOS report ready · ${statusText} · run ${result.run_id}`,
+        "LabOS report ready · " + statusText + " · run " + result.run_id,
         10000,
       );
 
@@ -590,7 +1262,7 @@ export class LabOSView extends ItemView {
       if (file) {
         await this.app.workspace.getLeaf(false).openFile(file);
       } else {
-        new Notice(`Report saved at: ${vaultPath}`, 10000);
+        new Notice("Report saved at: " + vaultPath, 10000);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -598,8 +1270,7 @@ export class LabOSView extends ItemView {
     } finally {
       this.reportTask = null;
       this.reportProgress = null;
-      button.setText(idleLabel);
-      progressEl.empty();
+      this.updateProgressDisplay();
       await this.refresh();
     }
   }
@@ -629,7 +1300,7 @@ export class LabOSView extends ItemView {
       const head = row.createDiv({ cls: "labos-event-head" });
       head.createSpan({
         cls: "labos-event-kind",
-        text: event.type.replace("_", " "),
+        text: event.type.replaceAll("_", " "),
       });
       head.createSpan({
         cls: "labos-event-time",
@@ -646,6 +1317,7 @@ export class LabOSView extends ItemView {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       new Notice(message, 8000);
+      await this.refresh();
     }
   }
 }

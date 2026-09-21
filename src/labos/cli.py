@@ -7,6 +7,13 @@ from typing import Sequence
 
 from .agents import SUPPORTED_PROVIDERS
 from .doctor import doctor_text, run_doctor
+from .knowledge import (
+    approve_fact,
+    approve_power_profile,
+    device_knowledge,
+    edit_fact,
+    edit_power_profile,
+)
 from .ledger import (
     active_session,
     add_note,
@@ -42,6 +49,16 @@ def _text(parts: list[str] | None) -> str | None:
 
 def _home(args: argparse.Namespace) -> Path:
     return Path(args.home).expanduser().resolve() if args.home else default_home()
+
+
+def _rails_json(raw: str) -> list[dict]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid --rails-json: {exc}") from exc
+    if not isinstance(value, list):
+        raise ValueError("--rails-json must be a JSON array")
+    return value
 
 
 def _short_event(event: dict) -> str:
@@ -140,6 +157,65 @@ def build_parser() -> argparse.ArgumentParser:
         "remove", help="Remove a device from the active session."
     )
     device_remove.add_argument("target", help="Alias, fingerprint, or resource ID.")
+
+    device_knowledge_parser = device_sub.add_parser(
+        "knowledge", help="Show human-approved facts and power profiles."
+    )
+    device_knowledge_parser.add_argument(
+        "target", help="Alias, fingerprint, or resource ID."
+    )
+
+    device_fact = device_sub.add_parser("fact", help="Manage human-approved facts.")
+    device_fact_sub = device_fact.add_subparsers(dest="fact_command", required=True)
+
+    fact_approve = device_fact_sub.add_parser(
+        "approve", help="Explicitly approve a device fact."
+    )
+    fact_approve.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    fact_approve.add_argument("--name", required=True)
+    fact_approve.add_argument("--value", required=True)
+    fact_approve.add_argument("--evidence", action="append", default=[])
+    fact_approve.add_argument("--notes")
+
+    fact_edit = device_fact_sub.add_parser(
+        "edit", help="Explicitly re-approve a corrected device fact."
+    )
+    fact_edit.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    fact_edit.add_argument("fact_id")
+    fact_edit.add_argument("--name", required=True)
+    fact_edit.add_argument("--value", required=True)
+    fact_edit.add_argument("--evidence", action="append", default=[])
+    fact_edit.add_argument("--notes")
+
+    device_power = device_sub.add_parser(
+        "power", help="Manage human-approved Power Profiles."
+    )
+    device_power_sub = device_power.add_subparsers(
+        dest="power_command", required=True
+    )
+
+    power_approve = device_power_sub.add_parser(
+        "approve", help="Explicitly approve a Power Profile."
+    )
+    power_approve.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    power_approve.add_argument("--name", required=True)
+    power_approve.add_argument(
+        "--rails-json",
+        required=True,
+        help="JSON array of rails with label, voltage/unit, current limit/unit, polarity.",
+    )
+    power_approve.add_argument("--evidence", action="append", default=[])
+    power_approve.add_argument("--notes")
+
+    power_edit = device_power_sub.add_parser(
+        "edit", help="Explicitly re-approve a corrected Power Profile."
+    )
+    power_edit.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    power_edit.add_argument("profile_id")
+    power_edit.add_argument("--name", required=True)
+    power_edit.add_argument("--rails-json", required=True)
+    power_edit.add_argument("--evidence", action="append", default=[])
+    power_edit.add_argument("--notes")
 
     record = sub.add_parser(
         "record",
@@ -257,6 +333,55 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(_short_event(use_resource(home, args.target)))
             elif args.device_command == "remove":
                 print(_short_event(remove_resource(home, args.target)))
+            elif args.device_command == "knowledge":
+                print(json.dumps(device_knowledge(home, args.target), sort_keys=True))
+            elif args.device_command == "fact":
+                if args.fact_command == "approve":
+                    result = approve_fact(
+                        home,
+                        args.target,
+                        name=args.name,
+                        value=args.value,
+                        evidence_refs=args.evidence,
+                        notes=args.notes,
+                    )
+                elif args.fact_command == "edit":
+                    result = edit_fact(
+                        home,
+                        args.target,
+                        args.fact_id,
+                        name=args.name,
+                        value=args.value,
+                        evidence_refs=args.evidence,
+                        notes=args.notes,
+                    )
+                else:
+                    parser.error(f"unknown fact command: {args.fact_command}")
+                print(json.dumps(result, sort_keys=True))
+            elif args.device_command == "power":
+                rails = _rails_json(args.rails_json)
+                if args.power_command == "approve":
+                    result = approve_power_profile(
+                        home,
+                        args.target,
+                        name=args.name,
+                        rails=rails,
+                        evidence_refs=args.evidence,
+                        notes=args.notes,
+                    )
+                elif args.power_command == "edit":
+                    result = edit_power_profile(
+                        home,
+                        args.target,
+                        args.profile_id,
+                        name=args.name,
+                        rails=rails,
+                        evidence_refs=args.evidence,
+                        notes=args.notes,
+                    )
+                else:
+                    parser.error(f"unknown power command: {args.power_command}")
+                print(json.dumps(result, sort_keys=True))
             else:
                 parser.error(f"unknown device command: {args.device_command}")
         elif args.command == "record":
