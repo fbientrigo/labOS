@@ -44,6 +44,7 @@ By default LabOS writes to `~/labos-data`; override it with `LABOS_HOME` or `--h
 ~/labos-data/
 ├── events.jsonl             # append-only raw evidence
 ├── resources.json           # mutable current device identity registry
+├── device_knowledge.json    # explicit human-approved facts / Power Profiles
 ├── artifacts/               # explicit managed copies only
 └── .active-session.json     # mutable convenience state
 ```
@@ -80,6 +81,11 @@ labos device show TARGET
 labos device edit TARGET [--fingerprint ID] [--alias NAME] [--kind KIND]
 labos device use TARGET
 labos device remove TARGET
+labos device knowledge TARGET
+labos device fact approve TARGET --name NAME --value VALUE [--evidence REF ...] [--notes TEXT]
+labos device fact edit TARGET FACT_ID --name NAME --value VALUE [--evidence REF ...] [--notes TEXT]
+labos device power approve TARGET --name NAME --rails-json JSON [--evidence REF ...] [--notes TEXT]
+labos device power edit TARGET PROFILE_ID --name NAME --rails-json JSON [--evidence REF ...] [--notes TEXT]
 ```
 
 ## Obsidian desktop UI
