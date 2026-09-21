@@ -130,8 +130,37 @@ export class LabOSView extends ItemView {
     contentEl.empty();
     contentEl.addClass("labos-view");
 
-    const header = contentEl.createDiv({ cls: "labos-header" });
-    header.createEl("strong", { text: "LabOS" });
+    const header = contentEl.createDiv({ cls: "labos-header labos-topbar" });
+
+    const brand = header.createEl("button", {
+      cls: "labos-brand-button",
+      attr: {
+        type: "button",
+        title: "LabOS · Experiments Remember — refresh view",
+        "aria-label": "LabOS · Experiments Remember — refresh view",
+      },
+    });
+    const mark = brand.createSpan({
+      cls: "labos-memory-core",
+      attr: { "aria-hidden": "true" },
+    });
+    for (let index = 1; index <= 4; index += 1) {
+      mark.createSpan({ cls: `labos-memory-core-segment segment-${index}` });
+    }
+    mark.createSpan({ cls: "labos-memory-core-center" });
+    mark.createSpan({ cls: "labos-memory-core-state" });
+
+    const brandCopy = brand.createSpan({ cls: "labos-brand-copy" });
+    const wordmark = brandCopy.createSpan({ cls: "labos-wordmark" });
+    wordmark.createSpan({ cls: "labos-wordmark-lab", text: "Lab" });
+    wordmark.createSpan({ cls: "labos-wordmark-os", text: "OS" });
+    brandCopy.createSpan({
+      cls: "labos-brand-tagline",
+      text: "EXPERIMENTS REMEMBER",
+    });
+    brand.addEventListener("click", () => {
+      void this.refresh();
+    });
 
     const headerActions = header.createDiv({ cls: "labos-actions" });
     const doctor = headerActions.createEl("button", { text: "Check setup" });
