@@ -15,7 +15,7 @@ The plugin does **not** implement a second evidence store. It executes the exist
 - current-session / recent timeline;
 - command to capture selected editor text;
 - commands for WORKING / BROKEN;
-- configurable LabOS executable, evidence home, default project/workdir, and timeline length.
+- configurable LabOS executable, evidence home, default project/workdir, and timeline length;\n- on-demand AI report generation with configurable worker, validator, and critic;\n- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
 
 ## Requirements
 
@@ -70,7 +70,7 @@ pip install -e .
 
 If Obsidian cannot find `labos` because it was launched outside your shell environment, set an absolute executable path in **Settings -> LabOS -> LabOS executable**.
 
-Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.
+Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.\n\nUnder **Reports**, choose the default mode. Factual requires no AI; Reviewed uses worker+validator; Rigorous adds critic, revision, and final validation. Advanced settings select providers and optional explicit model pins for provenance. The corresponding local CLIs must already be installed and authenticated for AI modes. See [`../docs/AI_REPORTS.md`](../docs/AI_REPORTS.md).
 
 ## Data ownership
 

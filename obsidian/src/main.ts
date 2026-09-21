@@ -11,6 +11,15 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   defaultProject: "",
   defaultWorkdir: "",
   recentLimit: 30,
+  reportsFolder: "LabOS/Reports",
+  reportMode: "reviewed",
+  reportWorker: "agy",
+  reportValidator: "codex",
+  reportCritic: "claude",
+  reportTimeoutSeconds: 300,
+  agyModel: "",
+  codexModel: "",
+  claudeModel: "",
 };
 
 export default class LabOSPlugin extends Plugin {
@@ -37,6 +46,14 @@ export default class LabOSPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "doctor",
+      name: "Check setup",
+      callback: () => {
+        void this.runDoctor();
+      },
+    });
+
+    this.addCommand({
       id: "capture-selection",
       name: "Capture editor selection as note",
       editorCallback: (editor: Editor) => {
@@ -45,7 +62,6 @@ export default class LabOSPlugin extends Plugin {
           new Notice("Select text to capture as a LabOS note.");
           return;
         }
-
         void this.captureNote(text);
       },
     });
@@ -92,13 +108,11 @@ export default class LabOSPlugin extends Plugin {
         new Notice("Could not open the LabOS panel.");
         return;
       }
-
       await leaf.setViewState({
         type: VIEW_TYPE_LABOS,
         active: true,
       });
     }
-
     await workspace.revealLeaf(leaf);
   }
 
@@ -116,6 +130,21 @@ export default class LabOSPlugin extends Plugin {
       ...DEFAULT_SETTINGS,
       ...(saved ?? {}),
     };
+  }
+
+  private async runDoctor(): Promise<void> {
+    try {
+      const result = await this.getBackend().doctor();
+      const agents = Object.entries(result.agents)
+        .map(([name, probe]) => `${name}=${probe.available ? "OK" : "missing"}`)
+        .join(", ");
+      new Notice(
+        `LabOS core=${result.core_ok ? "OK" : "FAIL"}; ${agents}`,
+        10000,
+      );
+    } catch (error) {
+      this.showError(error);
+    }
   }
 
   private async captureNote(text: string): Promise<void> {

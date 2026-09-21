@@ -85,9 +85,9 @@ Terminal ───────┐
 Obsidian panel ─┘
 ```
 
-It provides Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, and capture of selected editor text. It does not implement a second evidence store.
+It provides Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, evidence coverage, setup preflight, and versioned Factual/Reviewed/Rigorous handoffs with live progress and cancellation. Reports are derived outputs; they do not implement a second evidence store.
 
-Build/install instructions live in [`obsidian/README.md`](obsidian/README.md).
+Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). The professional reporting/reliability contract is documented in [`docs/AI_REPORTS.md`](docs/AI_REPORTS.md).
 
 ## Design invariants
 
@@ -101,7 +101,7 @@ Build/install instructions live in [`obsidian/README.md`](obsidian/README.md).
 
 ## Explicit non-goals for Phase 0
 
-No FastAPI or standalone web app, SQLite, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or Dreams.
+No FastAPI or standalone web app, SQLite, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or autonomous/background Dreams. AI remains explicit and optional: deterministic Session Records and factual reports require no model.
 
 Those features must earn their place from observed failures in real use.
 

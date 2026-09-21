@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from .locking import ledger_lock
+
 SCHEMA_VERSION = 1
 
 
@@ -44,20 +46,28 @@ def _new_id(prefix: str) -> str:
 
 
 def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
-def active_session(home: Path) -> dict[str, Any] | None:
+def _active_session_unlocked(home: Path) -> dict[str, Any] | None:
     path = _state_path(home)
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def active_session(home: Path) -> dict[str, Any] | None:
+    # State writes use atomic os.replace, so readers never observe a partial JSON file.
+    return _active_session_unlocked(ensure_home(home))
 
 
 def _session_workdir(session: dict[str, Any]) -> Path:
@@ -67,7 +77,7 @@ def _session_workdir(session: dict[str, Any]) -> Path:
     return Path.cwd().resolve()
 
 
-def append_event(
+def _append_event_unlocked(
     home: Path,
     event_type: str,
     payload: dict[str, Any] | None = None,
@@ -75,9 +85,8 @@ def append_event(
     event_id: str | None = None,
     session: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    home = ensure_home(home)
     if session is None:
-        session = active_session(home)
+        session = _active_session_unlocked(home)
 
     event_cwd = _session_workdir(session) if session else Path.cwd().resolve()
     event = {
@@ -98,6 +107,25 @@ def append_event(
         handle.flush()
         os.fsync(handle.fileno())
     return event
+
+
+def append_event(
+    home: Path,
+    event_type: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    event_id: str | None = None,
+    session: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    home = ensure_home(home)
+    with ledger_lock(home):
+        return _append_event_unlocked(
+            home,
+            event_type,
+            payload,
+            event_id=event_id,
+            session=session,
+        )
 
 
 def _run_git(cwd: Path, *args: str) -> str:
@@ -142,28 +170,35 @@ def start_session(
     workdir: Path | None = None,
 ) -> dict[str, Any]:
     home = ensure_home(home)
-    if active_session(home):
-        raise RuntimeError("A LabOS session is already active. End it before starting another.")
-
     session_workdir = (workdir or Path.cwd()).expanduser().resolve()
     if not session_workdir.is_dir():
         raise FileNotFoundError(f"LabOS work directory does not exist: {session_workdir}")
 
-    state = {
-        "schema_version": SCHEMA_VERSION,
-        "session_id": _new_id("ses"),
-        "project": project,
-        "label": label,
-        "started_at": now_iso(),
-        "started_cwd": str(session_workdir),
-    }
-    _atomic_json_write(_state_path(home), state)
-    return append_event(
-        home,
-        "session_start",
-        {"label": label, "git": git_snapshot(session_workdir)},
-        session=state,
-    )
+    with ledger_lock(home):
+        if _active_session_unlocked(home):
+            raise RuntimeError(
+                "A LabOS session is already active. End it before starting another."
+            )
+
+        state = {
+            "schema_version": SCHEMA_VERSION,
+            "session_id": _new_id("ses"),
+            "project": project,
+            "label": label,
+            "started_at": now_iso(),
+            "started_cwd": str(session_workdir),
+        }
+        _atomic_json_write(_state_path(home), state)
+        try:
+            return _append_event_unlocked(
+                home,
+                "session_start",
+                {"label": label, "git": git_snapshot(session_workdir)},
+                session=state,
+            )
+        except Exception:
+            _state_path(home).unlink(missing_ok=True)
+            raise
 
 
 def add_note(home: Path, text: str) -> dict[str, Any]:
@@ -173,33 +208,38 @@ def add_note(home: Path, text: str) -> dict[str, Any]:
 def checkpoint(home: Path, state: str, text: str | None = None) -> dict[str, Any]:
     if state not in {"working", "broken"}:
         raise ValueError("checkpoint state must be 'working' or 'broken'")
-    session = active_session(home)
-    if session is None:
-        raise RuntimeError("WORKING/BROKEN checkpoints require an active session.")
-    return append_event(
-        home,
-        "checkpoint",
-        {
-            "state": state,
-            "text": text,
-            "git": git_snapshot(_session_workdir(session)),
-        },
-        session=session,
-    )
+    home = ensure_home(home)
+
+    with ledger_lock(home):
+        session = _active_session_unlocked(home)
+        if session is None:
+            raise RuntimeError("WORKING/BROKEN checkpoints require an active session.")
+        return _append_event_unlocked(
+            home,
+            "checkpoint",
+            {
+                "state": state,
+                "text": text,
+                "git": git_snapshot(_session_workdir(session)),
+            },
+            session=session,
+        )
 
 
 def end_session(home: Path, text: str | None = None) -> dict[str, Any]:
-    session = active_session(home)
-    if session is None:
-        raise RuntimeError("No active LabOS session.")
-    event = append_event(
-        home,
-        "session_end",
-        {"text": text, "git": git_snapshot(_session_workdir(session))},
-        session=session,
-    )
-    _state_path(home).unlink(missing_ok=True)
-    return event
+    home = ensure_home(home)
+    with ledger_lock(home):
+        session = _active_session_unlocked(home)
+        if session is None:
+            raise RuntimeError("No active LabOS session.")
+        event = _append_event_unlocked(
+            home,
+            "session_end",
+            {"text": text, "git": git_snapshot(_session_workdir(session))},
+            session=session,
+        )
+        _state_path(home).unlink(missing_ok=True)
+        return event
 
 
 def _sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -247,23 +287,38 @@ def attach_artifact(
         payload["storage"] = "managed-copy"
         payload["managed_path"] = str(destination.relative_to(home))
 
-    return append_event(home, "artifact", payload, event_id=event_id)
+    with ledger_lock(home):
+        return _append_event_unlocked(
+            home,
+            "artifact",
+            payload,
+            event_id=event_id,
+        )
+
+
+def read_events(home: Path) -> list[dict[str, Any]]:
+    home = ensure_home(home)
+    with ledger_lock(home):
+        path = _events_path(home)
+        if not path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        with path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"Malformed LabOS event at line {line_number}: {exc}"
+                    ) from exc
+        return events
 
 
 def iter_events(home: Path) -> Iterable[dict[str, Any]]:
-    path = _events_path(home)
-    if not path.exists():
-        return []
-
-    def _generator() -> Iterable[dict[str, Any]]:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if line.strip():
-                    yield json.loads(line)
-
-    return _generator()
+    return iter(read_events(home))
 
 
 def recent_events(home: Path, limit: int = 20) -> list[dict[str, Any]]:
-    events = list(iter_events(home))
-    return events[-limit:]
+    return read_events(home)[-limit:]
