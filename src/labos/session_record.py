@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import active_session, read_events
+from .resources import resource_context_timeline
 
-SESSION_RECORD_VERSION = 1
+SESSION_RECORD_VERSION = 2
 
 
 def choose_session_id(home: Path, requested: str | None = None) -> str:
@@ -188,6 +189,7 @@ def build_session_record(
         for index, event in enumerate(events, start=1)
     }
     coverage = evidence_coverage(events)
+    resource_context = resource_context_timeline(events)
 
     return {
         "record_version": SESSION_RECORD_VERSION,
@@ -206,6 +208,7 @@ def build_session_record(
             *[f"coverage:{item['id']}" for item in coverage["items"]],
         ],
         "coverage": coverage,
+        "resource_context": resource_context,
         "git": {
             "start": _git(start),
             "end": _git(end),
@@ -270,6 +273,13 @@ def _event_detail(event: dict[str, Any]) -> str:
     if kind == "session_end":
         text = payload.get("text")
         return "END" + (f" — {text}" if text else "")
+    if kind in {"resource_add", "resource_remove"}:
+        action = "RESOURCE ADD" if kind == "resource_add" else "RESOURCE REMOVE"
+        alias = payload.get("alias") or payload.get("resource_id", "")
+        fingerprint = payload.get("fingerprint")
+        return action + f" — {alias}" + (
+            f" [{fingerprint}]" if fingerprint else ""
+        )
     return str(kind)
 
 
@@ -318,6 +328,30 @@ def render_session_record_markdown(
         lines.append(
             f"| {item['label']} | {marker} | {item['detail']} |"
         )
+
+    lines += ["", "## Resource context", ""]
+    transitions = [
+        event
+        for event in record["events"]
+        if event.get("type") in {"resource_add", "resource_remove"}
+    ]
+    if transitions:
+        for event in transitions:
+            alias = aliases[event["id"]]
+            lines.append(
+                f"- **{alias}** · {event['timestamp']} · {_event_detail(event)}"
+            )
+    else:
+        lines.append("_No device context was recorded._")
+
+    active_resources = record["resource_context"].get("active_at_end", [])
+    if active_resources:
+        lines += ["", "Active at end:"]
+        for resource in active_resources:
+            lines.append(
+                f"- {resource.get('alias') or resource.get('resource_id')} "
+                f"[{resource.get('fingerprint') or 'unknown'}]"
+            )
 
     lines += ["", "## Git snapshots", ""]
     lines.append(f"- START: {_git_summary(record['git'].get('start'))}")

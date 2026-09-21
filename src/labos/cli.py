@@ -17,6 +17,15 @@ from .ledger import (
     recent_events,
     start_session,
 )
+from .resources import (
+    RESOURCE_KINDS,
+    add_resource,
+    edit_resource,
+    list_resources,
+    remove_resource,
+    show_resource,
+    use_resource,
+)
 from .report import REPORT_MODES, generate_report
 from .session_record import (
     build_session_record,
@@ -53,6 +62,9 @@ def _short_event(event: dict) -> str:
             detail += f" — {payload['text']}"
     elif kind == "artifact":
         detail = f"{payload.get('kind', 'artifact')}: {payload.get('name', '')}"
+    elif kind in {"resource_add", "resource_remove"}:
+        action = "USE" if kind == "resource_add" else "REMOVE"
+        detail = f"{action} {payload.get('alias') or payload.get('resource_id', '')}"
     else:
         detail = json.dumps(payload, sort_keys=True)
     return f"{timestamp}  {detail}"
@@ -101,6 +113,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     recent = sub.add_parser("recent", help="Show recent evidence events.")
     recent.add_argument("-n", "--limit", type=int, default=20)
+
+    device = sub.add_parser("device", help="Manage persistent physical devices.")
+    device_sub = device.add_subparsers(dest="device_command", required=True)
+
+    device_add = device_sub.add_parser("add", help="Register a physical device.")
+    device_add.add_argument("--fingerprint", required=True)
+    device_add.add_argument("--alias", required=True)
+    device_add.add_argument("--kind", choices=RESOURCE_KINDS, default="other")
+
+    device_sub.add_parser("list", help="List registered devices.")
+
+    device_show = device_sub.add_parser("show", help="Show one device.")
+    device_show.add_argument("target", help="Alias, fingerprint, or resource ID.")
+
+    device_edit = device_sub.add_parser("edit", help="Correct device metadata.")
+    device_edit.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    device_edit.add_argument("--fingerprint")
+    device_edit.add_argument("--alias")
+    device_edit.add_argument("--kind", choices=RESOURCE_KINDS)
+
+    device_use = device_sub.add_parser("use", help="Add a device to the active session.")
+    device_use.add_argument("target", help="Alias, fingerprint, or resource ID.")
+
+    device_remove = device_sub.add_parser(
+        "remove", help="Remove a device from the active session."
+    )
+    device_remove.add_argument("target", help="Alias, fingerprint, or resource ID.")
 
     record = sub.add_parser(
         "record",
@@ -180,6 +219,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "recent":
             for event in recent_events(home, args.limit):
                 print(_short_event(event))
+        elif args.command == "device":
+            if args.device_command == "add":
+                resource = add_resource(
+                    home,
+                    fingerprint=args.fingerprint,
+                    alias=args.alias,
+                    kind=args.kind,
+                )
+                print(json.dumps(resource, sort_keys=True))
+            elif args.device_command == "list":
+                for resource in list_resources(home):
+                    print(
+                        f"{resource['alias']}\t{resource['fingerprint']}\t"
+                        f"{resource['kind']}\t{resource['resource_id']}"
+                    )
+            elif args.device_command == "show":
+                print(json.dumps(show_resource(home, args.target), sort_keys=True))
+            elif args.device_command == "edit":
+                if (
+                    args.fingerprint is None
+                    and args.alias is None
+                    and args.kind is None
+                ):
+                    raise ValueError(
+                        "device edit requires --fingerprint, --alias, or --kind"
+                    )
+                resource = edit_resource(
+                    home,
+                    args.target,
+                    fingerprint=args.fingerprint,
+                    alias=args.alias,
+                    kind=args.kind,
+                )
+                print(json.dumps(resource, sort_keys=True))
+            elif args.device_command == "use":
+                print(_short_event(use_resource(home, args.target)))
+            elif args.device_command == "remove":
+                print(_short_event(remove_resource(home, args.target)))
+            else:
+                parser.error(f"unknown device command: {args.device_command}")
         elif args.command == "record":
             record = build_session_record(home, args.session_id)
             digest = evidence_sha256(record)
