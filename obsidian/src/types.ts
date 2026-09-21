@@ -9,6 +9,24 @@ export type ReportStatus =
   | "FAILED"
   | "CANCELLED";
 
+export type DeviceKind = "board" | "scope" | "psu" | "daq" | "detector" | "other";
+
+export interface DeviceResource {
+  resource_id: string;
+  fingerprint: string;
+  alias: string;
+  kind: DeviceKind;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResourceSnapshot {
+  resource_id: string;
+  fingerprint?: string | null;
+  alias?: string | null;
+  kind?: string | null;
+}
+
 export interface LabOSSettings {
   executable: string;
   home: string;
@@ -71,6 +89,10 @@ export interface SessionRecord {
   };
   event_aliases: Record<string, string>;
   allowed_evidence_ids: string[];
+  resource_context?: {
+    by_event: Record<string, ResourceSnapshot[]>;
+    active_at_end: ResourceSnapshot[];
+  };
   events: LabOSEvent[];
 }
 
@@ -141,6 +163,18 @@ export interface LabOSBackend {
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
   record(sessionId?: string): Promise<SessionRecordResult>;
+  devices(): Promise<DeviceResource[]>;
+  addDevice(input: {
+    fingerprint: string;
+    alias: string;
+    kind: DeviceKind;
+  }): Promise<DeviceResource>;
+  editDevice(
+    target: string,
+    changes: { fingerprint?: string; alias?: string; kind?: DeviceKind },
+  ): Promise<DeviceResource>;
+  useDevice(target: string): Promise<void>;
+  removeDevice(target: string): Promise<void>;
   doctor(providers?: AgentProvider[]): Promise<DoctorResult>;
   startReport(
     outputDir: string,

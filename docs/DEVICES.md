@@ -76,7 +76,27 @@ The deterministic Session Record derives a per-event resource context only from 
 
 Sessions that predate resources remain valid. Their resource context is simply unrecorded.
 
-## What Phase A does not know
+## Obsidian device interface
+
+Phase B exposes the resource model as a first-class operational interface in Obsidian:
+
+- **Today** — start/capture work and optionally select devices;
+- **Devices** — search physical units, register/correct identity, open a device-specific page;
+- **Reports** — generate deterministic/AI-reviewed handoffs separately from capture.
+
+During active work the UI shows the current resource context and supports one-click add/remove plus a keyboard-searchable **Replace** action. Replace emits an explicit `resource_remove` followed by `resource_add`; no past event is edited.
+
+A device page shows:
+
+- current identity;
+- whether it is active in the current session;
+- evidence from the current session whose derived resource context contains that device;
+- quick note / WORKING / BROKEN actions when the device is active;
+- explicit empty states for Power and cross-session device state.
+
+A checkpoint is still a session checkpoint. If several resources are active, the event is attributable to all of them according to the recorded context; the UI does not pretend it belongs exclusively to the page currently open.
+
+## What Phase A/B do not know
 
 Phase A identifies physical units and records when they enter or leave a work session. It does not yet store approved electrical facts such as supply voltage, current limit, polarity, or power profiles. Those require explicit human-approved semantics in a later phase.
 

@@ -92,7 +92,7 @@ Terminal ───────┐
 Obsidian panel ─┘
 ```
 
-It provides Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, evidence coverage, setup preflight, and versioned Factual/Reviewed/Rigorous handoffs with live progress and cancellation. Reports are derived outputs; they do not implement a second evidence store.
+It provides primary **Today / Devices / Reports** navigation, device-specific operational pages, optional device selection at session start, fast device add/remove/replace transitions, Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, evidence coverage, setup preflight, and versioned Factual/Reviewed/Rigorous handoffs with live progress and cancellation. Reports are derived outputs; they do not implement a second evidence store.
 
 Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). The professional reporting/reliability contract is documented in [`docs/AI_REPORTS.md`](docs/AI_REPORTS.md). Physical device identity and session resource context are documented in [`docs/DEVICES.md`](docs/DEVICES.md).
 

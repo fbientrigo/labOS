@@ -7,6 +7,8 @@ import { join, resolve } from "path";
 import type {
   AgentProvider,
   CheckpointState,
+  DeviceKind,
+  DeviceResource,
   DoctorResult,
   LabOSBackend,
   LabOSEvent,
@@ -141,6 +143,84 @@ export class CliLabOSBackend implements LabOSBackend {
       args.push("--session-id", sessionId);
     }
     return JSON.parse(await this.run("record", args)) as SessionRecordResult;
+  }
+
+  async devices(): Promise<DeviceResource[]> {
+    try {
+      const raw = await readFile(join(this.home(), "resources.json"), "utf8");
+      const parsed = JSON.parse(raw) as { resources?: unknown };
+      if (!Array.isArray(parsed.resources)) {
+        throw new Error("Malformed LabOS resource registry: expected resources list.");
+      }
+      return parsed.resources
+        .filter((item): item is DeviceResource => {
+          if (!item || typeof item !== "object") {
+            return false;
+          }
+          const resource = item as Record<string, unknown>;
+          return (
+            typeof resource.resource_id === "string" &&
+            typeof resource.fingerprint === "string" &&
+            typeof resource.alias === "string" &&
+            typeof resource.kind === "string" &&
+            typeof resource.created_at === "string" &&
+            typeof resource.updated_at === "string"
+          );
+        })
+        .sort((a, b) => {
+          const byAlias = a.alias.localeCompare(b.alias, undefined, {
+            sensitivity: "base",
+          });
+          return byAlias || a.fingerprint.localeCompare(b.fingerprint);
+        });
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async addDevice(input: {
+    fingerprint: string;
+    alias: string;
+    kind: DeviceKind;
+  }): Promise<DeviceResource> {
+    const raw = await this.run("device", [
+      "add",
+      "--fingerprint",
+      input.fingerprint,
+      "--alias",
+      input.alias,
+      "--kind",
+      input.kind,
+    ]);
+    return JSON.parse(raw) as DeviceResource;
+  }
+
+  async editDevice(
+    target: string,
+    changes: { fingerprint?: string; alias?: string; kind?: DeviceKind },
+  ): Promise<DeviceResource> {
+    const args = ["edit", target];
+    if (changes.fingerprint !== undefined) {
+      args.push("--fingerprint", changes.fingerprint);
+    }
+    if (changes.alias !== undefined) {
+      args.push("--alias", changes.alias);
+    }
+    if (changes.kind !== undefined) {
+      args.push("--kind", changes.kind);
+    }
+    return JSON.parse(await this.run("device", args)) as DeviceResource;
+  }
+
+  async useDevice(target: string): Promise<void> {
+    await this.run("device", ["use", target]);
+  }
+
+  async removeDevice(target: string): Promise<void> {
+    await this.run("device", ["remove", target]);
   }
 
   async doctor(providers?: AgentProvider[]): Promise<DoctorResult> {

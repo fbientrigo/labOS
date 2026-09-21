@@ -6,13 +6,18 @@ The plugin does **not** implement a second evidence store. It executes the exist
 
 ## Features
 
-- right-side LabOS panel;
+- right-side LabOS panel with primary **Today / Devices / Reports** navigation;
+- device list and device-specific operational pages;
+- register/correct device identity from Obsidian without exposing the opaque ID in normal use;
+- optional device selection when starting work;
+- fast add/remove/replace device actions during an active session;
 - start/end work session;
 - optional repo/work directory so Git snapshots refer to the experiment rather than the Obsidian process;
 - quick notes with Enter;
 - WORKING / BROKEN checkpoints;
 - attach the current note or another file from the vault;
 - current-session / recent timeline;
+- current-session evidence filtered by physical device;
 - command to capture selected editor text;
 - commands for WORKING / BROKEN;
 - configurable LabOS executable, evidence home, default project/workdir, and timeline length;\n- on-demand AI report generation with configurable worker, validator, and critic;\n- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
@@ -74,11 +79,11 @@ Set **Default work directory** to the repo you most often use, or change the wor
 
 ## Data ownership
 
-The plugin does not rewrite raw evidence. It calls the same CLI as the terminal workflow:
+The plugin does not rewrite raw evidence. Device writes also call the same CLI as the terminal workflow. Current device identity is read from the transparent `resources.json` registry; session associations remain append-only `resource_add` / `resource_remove` evidence:
 
 ```text
 Obsidian panel ─┐
-                ├─> LabOS CLI ─> events.jsonl / artifacts
+                ├─> LabOS CLI ─> events.jsonl / resources.json / artifacts
 Terminal ───────┘
 ```
 
@@ -93,3 +98,12 @@ Removing the plugin does not make LabOS data unreadable or unusable.
 - resource ontology;
 - automatic filesystem monitoring;
 - automatic instrument integration.
+
+
+## Device interface
+
+The **Devices** page is operational rather than a generic CRUD table. A device page shows its alias, physical fingerprint and kind, whether it is part of the current work, current-session evidence, and quick capture/checkpoint actions when active.
+
+Power settings and cross-session Last Known Working are intentionally shown as unrecorded/not indexed until their dedicated evidence models exist. The UI does not infer them from absence of changes.
+
+When multiple resources are active, notes and WORKING/BROKEN checkpoints created from a device page still belong to the complete active session resource context.
