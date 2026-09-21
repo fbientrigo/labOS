@@ -145,6 +145,58 @@ def _validator_prompt(
     )
 
 
+def _validate_validator_contract(
+    validation: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    if not isinstance(validation.get("approved"), bool):
+        raise ValueError("Validator output is missing boolean 'approved'.")
+
+    index_keys = (
+        "unsupported_fact_indices",
+        "unsupported_change_indices",
+        "unsupported_advice_indices",
+        "unsupported_open_question_indices",
+        "unsupported_uncertainty_indices",
+    )
+    for key in index_keys:
+        value = validation.get(key)
+        if not isinstance(value, list):
+            raise ValueError(f"Validator output field '{key}' must be a list.")
+
+    if not isinstance(validation.get("unsupported_summary"), bool):
+        raise ValueError(
+            "Validator output field 'unsupported_summary' must be boolean."
+        )
+
+    section_lengths = {
+        "unsupported_fact_indices": len(_list_dicts(candidate.get("facts"))),
+        "unsupported_change_indices": len(_list_dicts(candidate.get("changes"))),
+        "unsupported_advice_indices": len(_list_dicts(candidate.get("advice"))),
+        "unsupported_open_question_indices": len(
+            _list_dicts(candidate.get("open_questions"))
+        ),
+        "unsupported_uncertainty_indices": len(
+            _list_dicts(candidate.get("uncertainties"))
+        ),
+    }
+    for key, length in section_lengths.items():
+        for index in _blocked(validation, key):
+            if index < 0 or index >= length:
+                raise ValueError(
+                    f"Validator output field '{key}' contains out-of-range index {index}."
+                )
+
+    if validation["approved"] is False:
+        located_rejection = bool(validation["unsupported_summary"]) or any(
+            bool(_blocked(validation, key)) for key in index_keys
+        )
+        if not located_rejection:
+            raise ValueError(
+                "Validator rejected the candidate without locating unsupported content."
+            )
+
+
 def _critic_prompt(
     evidence: dict[str, Any],
     draft: dict[str, Any],
@@ -862,6 +914,7 @@ def generate_report(
                     cancelled=lambda: _cancelled(cancel_path),
                 )
             )
+            _validate_validator_contract(draft_validation, draft)
             _check_cancel(cancel_path)
 
             if mode == "reviewed":
@@ -934,6 +987,7 @@ def generate_report(
                         cancelled=lambda: _cancelled(cancel_path),
                     )
                 )
+                _validate_validator_contract(final_validation, final_candidate)
                 _check_cancel(cancel_path)
 
             assert final_candidate is not None
