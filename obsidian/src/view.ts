@@ -158,6 +158,11 @@ class DevicePicker extends FuzzySuggestModal<DeviceResource> {
 export class LabOSView extends ItemView {
   private reportTask: ReportTask | null = null;
   private reportProgress: ReportProgress | null = null;
+  private reportControls: {
+    button: HTMLButtonElement;
+    progress: HTMLElement;
+    idleLabel: string;
+  } | null = null;
   private doctorResult: DoctorResult | null = null;
   private page: LabOSPage = "today";
   private selectedDeviceId: string | null = null;
@@ -189,6 +194,7 @@ export class LabOSView extends ItemView {
 
   async refresh(): Promise<void> {
     const { contentEl } = this;
+    this.reportControls = null;
     contentEl.empty();
     contentEl.addClass("labos-view");
 
@@ -1014,7 +1020,8 @@ export class LabOSView extends ItemView {
       text: this.reportTask ? "Cancel report" : label,
     });
     const progress = block.createDiv({ cls: "labos-progress" });
-    this.updateProgressDisplay(progress, button, label);
+    this.reportControls = { button, progress, idleLabel: label };
+    this.updateProgressDisplay();
 
     button.addEventListener("click", () => {
       if (this.reportTask) {
@@ -1022,13 +1029,7 @@ export class LabOSView extends ItemView {
         void this.reportTask.cancel();
         return;
       }
-      void this.generateReport(
-        button,
-        progress,
-        mode.value as ReportMode,
-        sessionId,
-        label,
-      );
+      void this.generateReport(mode.value as ReportMode, sessionId);
     });
 
     block.createDiv({
@@ -1037,25 +1038,25 @@ export class LabOSView extends ItemView {
     });
   }
 
-  private updateProgressDisplay(
-    progressEl: HTMLElement,
-    button: HTMLButtonElement,
-    idleLabel: string,
-  ): void {
-    progressEl.empty();
+  private updateProgressDisplay(): void {
+    const controls = this.reportControls;
+    if (!controls) {
+      return;
+    }
+    controls.progress.empty();
     if (!this.reportProgress) {
-      if (!this.reportTask) {
-        button.setText(idleLabel);
-      }
+      controls.button.setText(
+        this.reportTask ? "Cancel report" : controls.idleLabel,
+      );
       return;
     }
     const p = this.reportProgress;
-    progressEl.createDiv({
+    controls.progress.createDiv({
       text: String(p.current) + "/" + String(p.total) + " · " + p.message,
     });
-    if (this.reportTask) {
-      button.setText("Cancel · " + p.stage);
-    }
+    controls.button.setText(
+      this.reportTask ? "Cancel · " + p.stage : controls.idleLabel,
+    );
   }
 
   private async captureNote(textarea: HTMLTextAreaElement): Promise<void> {
@@ -1097,11 +1098,8 @@ export class LabOSView extends ItemView {
   }
 
   private async generateReport(
-    button: HTMLButtonElement,
-    progressEl: HTMLElement,
     mode: ReportMode,
     sessionId: string | undefined,
-    idleLabel: string,
   ): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
@@ -1137,11 +1135,11 @@ export class LabOSView extends ItemView {
       },
       (next) => {
         this.reportProgress = next;
-        this.updateProgressDisplay(progressEl, button, idleLabel);
+        this.updateProgressDisplay();
       },
     );
     this.reportTask = task;
-    this.updateProgressDisplay(progressEl, button, idleLabel);
+    this.updateProgressDisplay();
 
     try {
       const result = await task.promise;
@@ -1182,8 +1180,7 @@ export class LabOSView extends ItemView {
     } finally {
       this.reportTask = null;
       this.reportProgress = null;
-      button.setText(idleLabel);
-      progressEl.empty();
+      this.updateProgressDisplay();
       await this.refresh();
     }
   }
