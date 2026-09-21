@@ -761,11 +761,11 @@ def generate_report(
     deterministic_md = render_session_record_markdown(record, evidence_sha)
     _write_new(session_record_path, deterministic_md)
 
-    providers = {
-        "worker": worker,
-        "validator": validator,
-        "critic": critic,
-    }
+    providers: dict[str, str] = {}
+    if mode != "factual":
+        providers = {"worker": worker, "validator": validator}
+        if mode == "rigorous":
+            providers["critic"] = critic
     manifest: dict[str, Any] = {
         "run_id": run_id,
         "pipeline_version": PIPELINE_VERSION,
@@ -808,9 +808,7 @@ def generate_report(
             status = "FACTUAL"
             generated = deterministic_md
         else:
-            roles = {"worker": worker, "validator": validator}
-            if mode == "rigorous":
-                roles["critic"] = critic
+            roles = dict(providers)
 
             _progress(
                 progress_path,
@@ -1063,8 +1061,18 @@ def generate_report(
         )
         if not generated_path.exists():
             _write_new(generated_path, fallback)
+        generated_sha = _sha256_file(generated_path)
         if not report_path.exists():
-            _write_new(report_path, fallback)
+            editable_header = (
+                "---\n"
+                f"labos_run_id: {run_id}\n"
+                f"labos_status: {status}\n"
+                f"labos_mode: {mode}\n"
+                f"labos_evidence_sha256: {evidence_sha}\n"
+                f"labos_generated_sha256: {generated_sha}\n"
+                "---\n\n"
+            )
+            _write_new(report_path, editable_header + generated_path.read_text(encoding="utf-8"))
         if not latex_path.exists():
             _write_new(
                 latex_path,
@@ -1077,8 +1085,52 @@ def generate_report(
                     run_id=run_id,
                 ),
             )
+        partial_provenance = {
+            "pipeline_version": PIPELINE_VERSION,
+            "labos_version": labos_version(),
+            "run_id": run_id,
+            "mode": mode,
+            "status": status,
+            "evidence_sha256": evidence_sha,
+            "generated_sha256": generated_sha,
+            "providers": providers,
+            "provider_provenance": provider_provenance,
+            "draft": draft,
+            "draft_validation": draft_validation,
+            "critique": critique,
+            "final_candidate": final_candidate,
+            "final_validation": final_validation,
+            "error": error,
+            "completed_at": now_iso(),
+        }
+        if not provenance_path.exists():
+            _write_new(
+                provenance_path,
+                json.dumps(partial_provenance, indent=2, sort_keys=True) + "\n",
+            )
+        if not zip_path.exists():
+            with zipfile.ZipFile(
+                zip_path,
+                "x",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as archive:
+                for path in (
+                    latex_path,
+                    report_path,
+                    generated_path,
+                    session_record_path,
+                    provenance_path,
+                    evidence_path,
+                ):
+                    archive.write(path, arcname=path.name)
         manifest.update(
-            {"status": status, "completed_at": now_iso(), "error": error}
+            {
+                "status": status,
+                "completed_at": now_iso(),
+                "generated_sha256": generated_sha,
+                "provider_provenance": provider_provenance,
+                "error": error,
+            }
         )
         _atomic_json(run_path, manifest)
 
@@ -1093,8 +1145,18 @@ def generate_report(
         )
         if not generated_path.exists():
             _write_new(generated_path, fallback)
+        generated_sha = _sha256_file(generated_path)
         if not report_path.exists():
-            _write_new(report_path, fallback)
+            editable_header = (
+                "---\n"
+                f"labos_run_id: {run_id}\n"
+                f"labos_status: {status}\n"
+                f"labos_mode: {mode}\n"
+                f"labos_evidence_sha256: {evidence_sha}\n"
+                f"labos_generated_sha256: {generated_sha}\n"
+                "---\n\n"
+            )
+            _write_new(report_path, editable_header + generated_path.read_text(encoding="utf-8"))
         if not latex_path.exists():
             _write_new(
                 latex_path,
@@ -1114,7 +1176,8 @@ def generate_report(
             "mode": mode,
             "status": status,
             "evidence_sha256": evidence_sha,
-            "providers": providers if mode != "factual" else {},
+            "generated_sha256": generated_sha,
+            "providers": providers,
             "provider_provenance": provider_provenance,
             "draft": draft,
             "draft_validation": draft_validation,
@@ -1129,8 +1192,29 @@ def generate_report(
                 provenance_path,
                 json.dumps(failure_provenance, indent=2, sort_keys=True) + "\n",
             )
+        if not zip_path.exists():
+            with zipfile.ZipFile(
+                zip_path,
+                "x",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as archive:
+                for path in (
+                    latex_path,
+                    report_path,
+                    generated_path,
+                    session_record_path,
+                    provenance_path,
+                    evidence_path,
+                ):
+                    archive.write(path, arcname=path.name)
         manifest.update(
-            {"status": status, "completed_at": now_iso(), "error": error}
+            {
+                "status": status,
+                "completed_at": now_iso(),
+                "generated_sha256": generated_sha,
+                "provider_provenance": provider_provenance,
+                "error": error,
+            }
         )
         _atomic_json(run_path, manifest)
 
