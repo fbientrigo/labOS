@@ -187,8 +187,9 @@ def test_rigorous_report_is_versioned_grounded_and_editable(
 
     generated_mode = Path(result["generated"]).stat().st_mode
     report_mode = Path(result["report"]).stat().st_mode
-    assert not generated_mode & stat.S_IWUSR
-    assert report_mode & stat.S_IWUSR
+    if os.name != "nt":
+        assert not generated_mode & stat.S_IWUSR
+        assert report_mode & stat.S_IWUSR
 
     manifest = json.loads(Path(result["run_manifest"]).read_text(encoding="utf-8"))
     assert manifest["evidence_sha256"] == result["evidence_sha256"]
