@@ -10,7 +10,15 @@ import {
 import { relative } from "path";
 
 import type LabOSPlugin from "./main";
-import type { LabOSEvent, SessionState } from "./types";
+import type {
+  DoctorResult,
+  LabOSEvent,
+  ReportMode,
+  ReportProgress,
+  ReportTask,
+  SessionRecordResult,
+  SessionState,
+} from "./types";
 
 export const VIEW_TYPE_LABOS = "labos-active-session";
 
@@ -23,28 +31,23 @@ function eventText(event: LabOSEvent): string {
   if (event.type === "note") {
     return payloadString(event, "text");
   }
-
   if (event.type === "checkpoint") {
     const state = payloadString(event, "state").toUpperCase();
     const text = payloadString(event, "text");
     return text ? `${state} — ${text}` : state;
   }
-
   if (event.type === "artifact") {
     const kind = payloadString(event, "kind") || "artifact";
     return `${kind}: ${payloadString(event, "name")}`;
   }
-
   if (event.type === "session_start") {
     const label = payloadString(event, "label");
     return label ? `START — ${label}` : "START";
   }
-
   if (event.type === "session_end") {
     const text = payloadString(event, "text");
     return text ? `END — ${text}` : "END";
   }
-
   return event.type;
 }
 
@@ -60,6 +63,16 @@ function isPhoto(file: TFile): boolean {
   return ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(
     file.extension.toLowerCase(),
   );
+}
+
+function modeDescription(mode: ReportMode): string {
+  if (mode === "factual") {
+    return "Deterministic only · no AI";
+  }
+  if (mode === "reviewed") {
+    return "Worker → validator";
+  }
+  return "Worker → validator → critic → revision → final validator";
 }
 
 class VaultFilePicker extends FuzzySuggestModal<TFile> {
@@ -85,6 +98,10 @@ class VaultFilePicker extends FuzzySuggestModal<TFile> {
 }
 
 export class LabOSView extends ItemView {
+  private reportTask: ReportTask | null = null;
+  private reportProgress: ReportProgress | null = null;
+  private doctorResult: DoctorResult | null = null;
+
   constructor(
     leaf: WorkspaceLeaf,
     private readonly plugin: LabOSPlugin,
@@ -115,17 +132,34 @@ export class LabOSView extends ItemView {
 
     const header = contentEl.createDiv({ cls: "labos-header" });
     header.createEl("strong", { text: "LabOS" });
-    const refreshButton = header.createEl("button", { text: "Refresh" });
+
+    const headerActions = header.createDiv({ cls: "labos-actions" });
+    const doctor = headerActions.createEl("button", { text: "Check setup" });
+    doctor.addEventListener("click", () => {
+      void this.runDoctor(doctor);
+    });
+    const refreshButton = headerActions.createEl("button", { text: "Refresh" });
     refreshButton.addEventListener("click", () => {
       void this.refresh();
     });
 
+    this.renderDoctorStatus(contentEl);
+
     try {
       const backend = this.plugin.getBackend();
       const session = await backend.status();
+      let record: SessionRecordResult | null = null;
 
       if (session) {
+        try {
+          record = await backend.record(session.session_id);
+        } catch {
+          // Keep capture usable even when derived display data has a problem.
+        }
         this.renderActiveSession(contentEl, session);
+        if (record) {
+          this.renderCoverage(contentEl, record);
+        }
       } else {
         this.renderStart(contentEl);
       }
@@ -135,6 +169,50 @@ export class LabOSView extends ItemView {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       contentEl.createDiv({ cls: "labos-error", text: message });
+    }
+  }
+
+  private renderDoctorStatus(container: HTMLElement): void {
+    if (!this.doctorResult) {
+      return;
+    }
+    const row = container.createDiv({ cls: "labos-status-line" });
+    row.createSpan({
+      cls: this.doctorResult.core_ok ? "labos-ok" : "labos-error",
+      text: `Core: ${this.doctorResult.core_ok ? "OK" : "FAIL"}`,
+    });
+    const agentSummary = Object.entries(this.doctorResult.agents)
+      .map(([name, probe]) => `${name}:${probe.available ? "OK" : "missing"}`)
+      .join(" · ");
+    row.createSpan({ cls: "labos-event-time", text: agentSummary });
+  }
+
+  private async runDoctor(button: HTMLButtonElement): Promise<void> {
+    const original = button.textContent || "Check setup";
+    button.disabled = true;
+    button.setText("Checking…");
+    try {
+      this.doctorResult = await this.plugin.getBackend().doctor();
+      const missing = Object.entries(this.doctorResult.agents)
+        .filter(([, probe]) => !probe.available)
+        .map(([name]) => name);
+      if (!this.doctorResult.core_ok) {
+        new Notice("LabOS core preflight failed. See panel status.", 10000);
+      } else if (missing.length) {
+        new Notice(
+          `Core OK. Missing optional agent CLI(s): ${missing.join(", ")}.`,
+          10000,
+        );
+      } else {
+        new Notice("LabOS core and agent CLI preflight passed.", 7000);
+      }
+      await this.refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      new Notice(message, 10000);
+    } finally {
+      button.disabled = false;
+      button.setText(original);
     }
   }
 
@@ -167,7 +245,6 @@ export class LabOSView extends ItemView {
         project.focus();
         return;
       }
-
       void this.act(async () => {
         await this.plugin.getBackend().start(
           projectValue,
@@ -178,10 +255,7 @@ export class LabOSView extends ItemView {
       });
     });
 
-    const report = section.createEl("button", { text: "Generate last AI report" });
-    report.addEventListener("click", () => {
-      void this.generateReport(report);
-    });
+    this.renderReportControls(section, undefined, "Generate last report");
   }
 
   private renderActiveSession(
@@ -211,7 +285,6 @@ export class LabOSView extends ItemView {
     });
 
     const actions = section.createDiv({ cls: "labos-actions" });
-
     const noteButton = actions.createEl("button", { text: "Add note" });
     noteButton.addEventListener("click", () => {
       void this.captureNote(capture);
@@ -235,7 +308,6 @@ export class LabOSView extends ItemView {
     });
 
     const attachActions = section.createDiv({ cls: "labos-actions" });
-
     const current = attachActions.createEl("button", {
       text: "Attach current note",
     });
@@ -255,10 +327,7 @@ export class LabOSView extends ItemView {
       }).open();
     });
 
-    const report = section.createEl("button", { text: "Generate AI report" });
-    report.addEventListener("click", () => {
-      void this.generateReport(report, session.session_id);
-    });
+    this.renderReportControls(section, session.session_id, "Generate report");
 
     const end = section.createEl("button", { text: "End work" });
     end.addEventListener("click", () => {
@@ -269,12 +338,118 @@ export class LabOSView extends ItemView {
     });
   }
 
+  private renderCoverage(
+    container: HTMLElement,
+    result: SessionRecordResult,
+  ): void {
+    const section = container.createDiv({ cls: "labos-section" });
+    const head = section.createDiv({ cls: "labos-header" });
+    head.createEl("h3", { text: "Evidence coverage" });
+    head.createSpan({
+      cls: "labos-event-time",
+      text: result.evidence_sha256.slice(0, 12),
+      attr: { title: result.evidence_sha256 },
+    });
+
+    const grid = section.createDiv({ cls: "labos-coverage" });
+    for (const item of result.record.coverage.items) {
+      const row = grid.createDiv({ cls: "labos-coverage-row" });
+      const symbol =
+        item.state === "present" ? "✓" : item.state === "absent" ? "–" : "·";
+      row.createSpan({
+        cls:
+          item.state === "present"
+            ? "labos-ok"
+            : item.state === "absent"
+              ? "labos-muted"
+              : "labos-event-time",
+        text: symbol,
+      });
+      row.createSpan({ text: item.label });
+      row.createSpan({ cls: "labos-event-time", text: item.detail });
+    }
+    section.createDiv({
+      cls: "labos-event-time",
+      text: "Coverage reports what was recorded; it is not a quality score.",
+    });
+  }
+
+  private renderReportControls(
+    section: HTMLElement,
+    sessionId: string | undefined,
+    label: string,
+  ): void {
+    const block = section.createDiv({ cls: "labos-report-block labos-stack" });
+    block.createEl("strong", { text: "Handoff" });
+
+    const row = block.createDiv({ cls: "labos-actions" });
+    const mode = row.createEl("select", { cls: "labos-select" });
+    for (const value of ["factual", "reviewed", "rigorous"] as ReportMode[]) {
+      const option = mode.createEl("option", {
+        text: value[0].toUpperCase() + value.slice(1),
+        value,
+      });
+      option.selected = this.plugin.settings.reportMode === value;
+    }
+    mode.disabled = this.reportTask !== null;
+    mode.addEventListener("change", () => {
+      this.plugin.settings.reportMode = mode.value as ReportMode;
+      void this.plugin.saveSettings();
+    });
+
+    const button = row.createEl("button", {
+      text: this.reportTask ? "Cancel report" : label,
+    });
+    const progress = block.createDiv({ cls: "labos-progress" });
+    this.updateProgressDisplay(progress, button, label);
+
+    button.addEventListener("click", () => {
+      if (this.reportTask) {
+        button.setText("Cancelling…");
+        void this.reportTask.cancel();
+        return;
+      }
+      void this.generateReport(
+        button,
+        progress,
+        mode.value as ReportMode,
+        sessionId,
+        label,
+      );
+    });
+
+    block.createDiv({
+      cls: "labos-event-time",
+      text: modeDescription(this.plugin.settings.reportMode),
+    });
+  }
+
+  private updateProgressDisplay(
+    progressEl: HTMLElement,
+    button: HTMLButtonElement,
+    idleLabel: string,
+  ): void {
+    progressEl.empty();
+    if (!this.reportProgress) {
+      if (!this.reportTask) {
+        button.setText(idleLabel);
+      }
+      return;
+    }
+    const p = this.reportProgress;
+    progressEl.createDiv({
+      text: `${p.current}/${p.total} · ${p.message}`,
+    });
+    if (this.reportTask) {
+      button.setText(`Cancel · ${p.stage}`);
+    }
+  }
+
   private async captureNote(textarea: HTMLTextAreaElement): Promise<void> {
     const text = textarea.value.trim();
     if (!text) {
       return;
     }
-
     await this.act(async () => {
       await this.plugin.getBackend().note(text);
       textarea.value = "";
@@ -286,7 +461,6 @@ export class LabOSView extends ItemView {
     textarea: HTMLTextAreaElement,
   ): Promise<void> {
     const text = textarea.value.trim();
-
     await this.act(async () => {
       await this.plugin.getBackend().checkpoint(state, text || undefined);
       textarea.value = "";
@@ -300,7 +474,6 @@ export class LabOSView extends ItemView {
       new Notice("LabOS file attachment currently requires Obsidian desktop.");
       return;
     }
-
     const fullPath = adapter.getFullPath(file.path);
     await this.act(async () => {
       await this.plugin
@@ -312,11 +485,14 @@ export class LabOSView extends ItemView {
 
   private async generateReport(
     button: HTMLButtonElement,
-    sessionId?: string,
+    progressEl: HTMLElement,
+    mode: ReportMode,
+    sessionId: string | undefined,
+    idleLabel: string,
   ): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
-      new Notice("AI reports currently require Obsidian desktop.");
+      new Notice("Reports currently require Obsidian desktop.");
       return;
     }
 
@@ -327,34 +503,56 @@ export class LabOSView extends ItemView {
       return;
     }
 
-    const original = button.textContent || "Generate AI report";
-    button.disabled = true;
-    button.setText("Generating…");
-    new Notice(
-      `LabOS report: ${this.plugin.settings.reportWorker} → ` +
-      `${this.plugin.settings.reportValidator} → ` +
-      `${this.plugin.settings.reportCritic} → ` +
-      `${this.plugin.settings.reportWorker}`,
-      6000,
+    this.reportProgress = {
+      stage: "starting",
+      message: "Starting report run",
+      current: 0,
+      total: 1,
+      status: "RUNNING",
+      timestamp: new Date().toISOString(),
+    };
+
+    const task = this.plugin.getBackend().startReport(
+      adapter.getFullPath(folder),
+      {
+        sessionId,
+        mode,
+        worker: this.plugin.settings.reportWorker,
+        validator: this.plugin.settings.reportValidator,
+        critic: this.plugin.settings.reportCritic,
+        timeoutSeconds: this.plugin.settings.reportTimeoutSeconds,
+      },
+      (next) => {
+        this.reportProgress = next;
+        this.updateProgressDisplay(progressEl, button, idleLabel);
+      },
     );
+    this.reportTask = task;
+    this.updateProgressDisplay(progressEl, button, idleLabel);
 
     try {
-      const result = await this.plugin.getBackend().report(
-        adapter.getFullPath(folder),
-        {
-          sessionId,
-          worker: this.plugin.settings.reportWorker,
-          validator: this.plugin.settings.reportValidator,
-          critic: this.plugin.settings.reportCritic,
-          timeoutSeconds: this.plugin.settings.reportTimeoutSeconds,
-        },
-      );
+      const result = await task.promise;
+      this.reportProgress = null;
+
+      if (result.status === "CANCELLED") {
+        new Notice("LabOS report cancelled. Deterministic Session Record preserved.");
+        return;
+      }
 
       const vaultPath = normalizePath(
-        relative(adapter.getBasePath(), result.markdown),
+        relative(adapter.getBasePath(), result.report),
       );
+      const statusText =
+        result.status === "VALIDATED"
+          ? "validated"
+          : result.status === "FACTUAL"
+            ? "factual"
+            : result.status === "REVIEW_REQUIRED"
+              ? "review required"
+              : "AI failed; factual fallback preserved";
+
       new Notice(
-        `Report ready. Markdown opened; Overleaf ZIP: ${result.overleaf_zip}`,
+        `LabOS report ready · ${statusText} · run ${result.run_id}`,
         10000,
       );
 
@@ -369,8 +567,11 @@ export class LabOSView extends ItemView {
       const message = error instanceof Error ? error.message : String(error);
       new Notice(message, 12000);
     } finally {
-      button.disabled = false;
-      button.setText(original);
+      this.reportTask = null;
+      this.reportProgress = null;
+      button.setText(idleLabel);
+      progressEl.empty();
+      await this.refresh();
     }
   }
 
