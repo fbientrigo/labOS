@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/labos-banner.webp" alt="LabOS — Experiments Remember" width="100%">
+  <img src="assets/labos-banner.svg" alt="LabOS — Experiments Remember" width="100%">
 </p>
 
 **LabOS is an experimental evidence ledger for electronics and physics lab work.**
