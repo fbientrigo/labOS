@@ -70,7 +70,7 @@ pip install -e .
 
 If Obsidian cannot find `labos` because it was launched outside your shell environment, set an absolute executable path in **Settings -> LabOS -> LabOS executable**.
 
-Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.\n\nUnder **AI report**, choose worker/validator/critic (`agy`, `codex`, or `claude`) and a reports folder. The corresponding local CLIs must already be installed and authenticated. See [`../docs/AI_REPORTS.md`](../docs/AI_REPORTS.md).
+Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.\n\nUnder **Reports**, choose the default mode. Factual requires no AI; Reviewed uses worker+validator; Rigorous adds critic, revision, and final validation. Advanced settings select providers and optional explicit model pins for provenance. The corresponding local CLIs must already be installed and authenticated for AI modes. See [`../docs/AI_REPORTS.md`](../docs/AI_REPORTS.md).
 
 ## Data ownership
 
