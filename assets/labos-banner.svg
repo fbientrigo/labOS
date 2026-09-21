@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="512" viewBox="0 0 1536 512" role="img" aria-labelledby="title desc">
+  <title id="title">LabOS — Experiments Remember</title>
+  <desc id="desc">LabOS State Stack visual identity banner.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F8FBFD"/>
+      <stop offset="0.58" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EAF5FA"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22C4DF"/>
+      <stop offset="1" stop-color="#08AFC9"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1536" height="512" fill="url(#bg)"/>
+  <circle cx="1370" cy="110" r="180" fill="#DDF1F8" opacity=".42" filter="url(#soft)"/>
+  <circle cx="120" cy="470" r="150" fill="#DCEAF4" opacity=".42" filter="url(#soft)"/>
+
+  <!-- Subtle technical grid -->
+  <g stroke="#B9D7E5" stroke-width="1" opacity=".26">
+    <path d="M0 112H1536M0 256H1536M0 400H1536"/>
+    <path d="M160 0V512M400 0V512M1280 0V512M1450 0V512"/>
+  </g>
+  <g fill="#B7D5E3" opacity=".38">
+    <circle cx="160" cy="112" r="5"/><circle cx="400" cy="256" r="5"/>
+    <circle cx="1280" cy="112" r="5"/><circle cx="1450" cy="400" r="5"/>
+  </g>
+
+  <!-- State Stack mark: 7 vector elements -->
+  <g transform="translate(245 112)">
+    <path d="M0 84 132 16 264 84 132 152Z" fill="#102A49"/>
+    <path d="M0 150 132 82 264 150 132 218Z" fill="none" stroke="url(#cyan)" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M0 214 132 146 264 214 132 282Z" fill="none" stroke="#B8C8D8" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M132 4V218" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="132" cy="84" r="23" fill="#FFFFFF"/>
+    <circle cx="132" cy="84" r="13" fill="#11B9D4"/>
+    <circle cx="132" cy="4" r="17" fill="#F59E0B"/>
+  </g>
+
+  <!-- Wordmark -->
+  <g transform="translate(585 152)">
+    <text x="0" y="110" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="118" font-weight="750" letter-spacing="-5">
+      <tspan fill="#102A49">Lab</tspan><tspan fill="#11B9D4">OS</tspan>
+    </text>
+    <text x="6" y="166" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="29" font-weight="600" letter-spacing="10" fill="#6B8094">
+      EXPERIMENTS REMEMBER
+    </text>
+  </g>
+
+  <!-- Faint state-stack echo -->
+  <g transform="translate(1260 92)" opacity=".16">
+    <path d="M0 70 106 16 212 70 106 124Z" fill="none" stroke="#FFFFFF" stroke-width="8"/>
+    <path d="M0 132 106 78 212 132 106 186Z" fill="none" stroke="#FFFFFF" stroke-width="8"/>
+    <path d="M0 194 106 140 212 194 106 248Z" fill="none" stroke="#FFFFFF" stroke-width="8"/>
+    <path d="M106 16V248" stroke="#FFFFFF" stroke-width="7"/>
+    <circle cx="106" cy="16" r="11" fill="#F59E0B"/>
+    <circle cx="106" cy="132" r="11" fill="#11B9D4"/>
+    <circle cx="106" cy="248" r="11" fill="#B8C8D8"/>
+  </g>
+</svg>
