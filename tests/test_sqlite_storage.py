@@ -96,7 +96,7 @@ def test_legacy_import_preserves_unknown_top_level_event_fields(tmp_path: Path) 
     events[1]["evidence_hash"] = "sha256:abc123"
     events[1]["instrument_context"] = {"scope": "tek-01", "channel": 2}
     legacy = home / "events.jsonl"
-    legacy.write_text("".join(json.dumps(event) + "\\n" for event in events), encoding="utf-8")
+    legacy.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
     (home / ".active-session.json").write_text(json.dumps({"session_id": "ses_1"}))
 
     assert ledger.read_events(home) == events
