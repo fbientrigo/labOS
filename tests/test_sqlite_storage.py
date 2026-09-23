@@ -88,6 +88,22 @@ def test_valid_legacy_import_once_preserves_original(tmp_path: Path) -> None:
     assert len(ledger.read_events(home)) == 3
 
 
+def test_legacy_import_preserves_unknown_top_level_event_fields(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    home.mkdir()
+    events = [_legacy_event("ev_start", "session_start", "ses_1"),
+              _legacy_event("ev_note", "note", "ses_1")]
+    events[1]["evidence_hash"] = "sha256:abc123"
+    events[1]["instrument_context"] = {"scope": "tek-01", "channel": 2}
+    legacy = home / "events.jsonl"
+    legacy.write_text("".join(json.dumps(event) + "\\n" for event in events), encoding="utf-8")
+    (home / ".active-session.json").write_text(json.dumps({"session_id": "ses_1"}))
+
+    assert ledger.read_events(home) == events
+    exported = [json.loads(line) for line in ledger.export_events(home).read_text().splitlines()]
+    assert exported == events
+
+
 def test_export_will_not_replace_legacy_evidence(tmp_path: Path) -> None:
     home = tmp_path / "labos"
     ledger.add_note(home, "measurement")
