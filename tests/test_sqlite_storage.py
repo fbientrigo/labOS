@@ -104,6 +104,50 @@ def test_legacy_import_preserves_unknown_top_level_event_fields(tmp_path: Path) 
     assert exported == events
 
 
+@pytest.mark.parametrize("project", [123, True, ["tgc"]])
+def test_legacy_import_rejects_non_text_project_without_changing_evidence(
+    tmp_path: Path, project: object
+) -> None:
+    home = tmp_path / "labos"
+    home.mkdir()
+    event = _legacy_event("ev_bad", "note", None)
+    event["project"] = project
+    legacy = home / "events.jsonl"
+    original = (json.dumps(event) + "\n").encode()
+    legacy.write_bytes(original)
+
+    with pytest.raises(RuntimeError, match="Invalid legacy events.jsonl line 1"):
+        ledger.read_events(home)
+    assert legacy.read_bytes() == original
+    # An unsuccessful import cannot leave a versioned or partially created store.
+    with sqlite3.connect(home / "labos.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
+
+    event["project"] = None
+    legacy.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    assert ledger.read_events(home) == [event]
+
+
+@pytest.mark.parametrize("field", ["project", "session_id", "schema_version"])
+def test_legacy_import_rejects_values_that_would_change_on_round_trip(
+    tmp_path: Path, field: str
+) -> None:
+    home = tmp_path / "labos"
+    home.mkdir()
+    event = _legacy_event("ev_bad", "note", None)
+    if field == "schema_version":
+        event[field] = True  # bool compares equal to 1 but is not the same JSON value.
+    else:
+        del event[field]  # A missing key must not be reconstructed as null.
+    legacy = home / "events.jsonl"
+    original = json.dumps(event) + "\n"
+    legacy.write_text(original, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Invalid legacy events.jsonl line 1"):
+        ledger.read_events(home)
+    assert legacy.read_text(encoding="utf-8") == original
+
+
 def test_export_will_not_replace_legacy_evidence(tmp_path: Path) -> None:
     home = tmp_path / "labos"
     ledger.add_note(home, "measurement")

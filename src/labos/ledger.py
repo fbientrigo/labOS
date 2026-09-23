@@ -70,12 +70,16 @@ def _validate_legacy(home: Path) -> tuple[list[dict[str, Any]], dict[str, dict[s
                 try:
                     event = json.loads(line)
                     if (not isinstance(event, dict) or
+                        not CANONICAL_EVENT_FIELDS.issubset(event) or
                         not isinstance(event.get("id"), str) or not event["id"] or
                         not isinstance(event.get("timestamp"), str) or
                         not isinstance(event.get("type"), str) or
                         not isinstance(event.get("cwd"), str) or
                         not isinstance(event.get("payload"), dict) or
-                        event.get("schema_version") != SCHEMA_VERSION or
+                        type(event.get("schema_version")) is not int or
+                        event["schema_version"] != SCHEMA_VERSION or
+                        (event.get("project") is not None and
+                         not isinstance(event["project"], str)) or
                         (event.get("session_id") is not None and
                          not isinstance(event["session_id"], str))):
                         raise ValueError("invalid event shape or version")
@@ -140,12 +144,14 @@ def _db(home: Path) -> Iterator[sqlite3.Connection]:
     try:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
-        if db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() != "wal":
-            raise RuntimeError("SQLite WAL is unavailable for this LabOS directory")
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA foreign_keys=ON")
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
+            # Journal mode is persistent. Only an uninitialized database may switch to WAL.
+            if db.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                if db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() != "wal":
+                    raise RuntimeError("SQLite WAL is unavailable for this LabOS directory")
             db.execute("BEGIN IMMEDIATE")
             try:
                 # Another process may have completed initialization while we waited.
@@ -160,6 +166,8 @@ def _db(home: Path) -> Iterator[sqlite3.Connection]:
                 raise
         elif version != 1:
             raise RuntimeError(f"Unsupported LabOS database schema version: {version}")
+        elif db.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+            raise RuntimeError("LabOS database is not in WAL mode; refusing to write")
         yield db
     finally:
         db.close()
