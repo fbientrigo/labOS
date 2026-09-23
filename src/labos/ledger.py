@@ -4,13 +4,13 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
-
-from .locking import ledger_lock
+from typing import Any, Iterable, Iterator
 
 SCHEMA_VERSION = 1
 
@@ -33,12 +33,8 @@ def ensure_home(home: Path) -> Path:
     return home
 
 
-def _events_path(home: Path) -> Path:
-    return ensure_home(home) / "events.jsonl"
-
-
-def _state_path(home: Path) -> Path:
-    return ensure_home(home) / ".active-session.json"
+def _database_path(home: Path) -> Path:
+    return ensure_home(home) / "labos.db"
 
 
 def _new_id(prefix: str) -> str:
@@ -58,16 +54,162 @@ def _atomic_json_write(path: Path, data: dict[str, Any]) -> None:
         tmp.unlink(missing_ok=True)
 
 
-def _active_session_unlocked(home: Path) -> dict[str, Any] | None:
-    path = _state_path(home)
-    if not path.exists():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+def _validate_legacy(home: Path) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Read all old evidence before the first import; never infer missing transitions."""
+    events: list[dict[str, Any]] = []
+    sessions: dict[str, dict[str, Any]] = {}
+    path = home / "events.jsonl"
+    if path.exists():
+        with path.open("r", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                    if (not isinstance(event, dict) or
+                        not isinstance(event.get("id"), str) or not event["id"] or
+                        not isinstance(event.get("timestamp"), str) or
+                        not isinstance(event.get("type"), str) or
+                        not isinstance(event.get("cwd"), str) or
+                        not isinstance(event.get("payload"), dict) or
+                        event.get("schema_version") != SCHEMA_VERSION or
+                        (event.get("session_id") is not None and
+                         not isinstance(event["session_id"], str))):
+                        raise ValueError("invalid event shape or version")
+                    sid = event.get("session_id")
+                    if event["type"] == "session_start":
+                        if not sid or sid in sessions or any(s["ended_at"] is None for s in sessions.values()):
+                            raise ValueError("duplicate or overlapping session start")
+                        if not isinstance(event.get("project"), str):
+                            raise ValueError("session start has no project")
+                        sessions[sid] = {
+                            "session_id": sid, "project": event["project"],
+                            "label": event["payload"].get("label"),
+                            "started_at": event["timestamp"], "ended_at": None,
+                            "started_cwd": event["cwd"],
+                        }
+                    elif sid:
+                        session = sessions.get(sid)
+                        if session is None or session["ended_at"] is not None:
+                            raise ValueError("event refers to a missing or ended session")
+                        if event.get("project") != session["project"] or event["cwd"] != session["started_cwd"]:
+                            raise ValueError("session context differs from its start")
+                        if event["type"] == "session_end":
+                            session["ended_at"] = event["timestamp"]
+                    elif event["type"] == "session_end":
+                        raise ValueError("session end has no session ID")
+                    events.append(event)
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise RuntimeError(f"Invalid legacy events.jsonl line {number}: {exc}") from exc
+    if len({e["id"] for e in events}) != len(events):
+        raise RuntimeError("Invalid legacy events.jsonl: duplicate event IDs")
+    state_path = home / ".active-session.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or not isinstance(state.get("session_id"), str):
+                raise ValueError("invalid active-session state")
+            active = next((s for s in sessions.values() if s["ended_at"] is None), None)
+            if active is None or active["session_id"] != state["session_id"]:
+                raise ValueError("active-session state contradicts event history")
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(f"Invalid legacy .active-session.json: {exc}") from exc
+    return events, sessions
+
+
+def _event_row(event: dict[str, Any]) -> tuple[Any, ...]:
+    return (event["id"], event["timestamp"], event["type"],
+            event.get("session_id"), event.get("project"), event["cwd"],
+            json.dumps(event["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            event["schema_version"])
+
+
+def _insert_event(db: sqlite3.Connection, event: dict[str, Any]) -> None:
+    db.execute("INSERT INTO events (id,timestamp,type,session_id,project,cwd,payload_json,schema_version) VALUES (?,?,?,?,?,?,?,?)", _event_row(event))
+
+
+@contextmanager
+def _db(home: Path) -> Iterator[sqlite3.Connection]:
+    home = ensure_home(home)
+    db = sqlite3.connect(_database_path(home), timeout=5, isolation_level=None)
+    try:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=5000")
+        if db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() != "wal":
+            raise RuntimeError("SQLite WAL is unavailable for this LabOS directory")
+        db.execute("PRAGMA synchronous=FULL")
+        db.execute("PRAGMA foreign_keys=ON")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                # Another process may have completed initialization while we waited.
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                if version == 0:
+                    _initialize(db, home)
+                elif version != 1:
+                    raise RuntimeError(f"Unsupported LabOS database schema version: {version}")
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        elif version != 1:
+            raise RuntimeError(f"Unsupported LabOS database schema version: {version}")
+        yield db
+    finally:
+        db.close()
+
+
+def _initialize(db: sqlite3.Connection, home: Path) -> None:
+    if db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+        raise RuntimeError("Unversioned LabOS database; refusing to change it")
+    events, sessions = _validate_legacy(home)
+    # execute() keeps schema creation and legacy import in one transaction.
+    for statement in ("""CREATE TABLE sessions (
+            session_id TEXT PRIMARY KEY, project TEXT NOT NULL,
+            label TEXT, started_at TEXT NOT NULL, ended_at TEXT,
+            started_cwd TEXT NOT NULL
+        )""",
+        "CREATE UNIQUE INDEX one_active_session ON sessions((1)) WHERE ended_at IS NULL",
+        """CREATE TABLE events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL,
+            type TEXT NOT NULL, session_id TEXT REFERENCES sessions(session_id),
+            project TEXT, cwd TEXT NOT NULL, payload_json TEXT NOT NULL,
+            schema_version INTEGER NOT NULL
+        )""",
+        """CREATE TRIGGER immutable_events_update BEFORE UPDATE ON events
+            BEGIN SELECT RAISE(ABORT, 'events are append-only'); END""",
+        """CREATE TRIGGER immutable_events_delete BEFORE DELETE ON events
+            BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"""):
+        db.execute(statement)
+    for session in sessions.values():
+        db.execute("INSERT INTO sessions VALUES (?,?,?,?,?,?)", tuple(session[k] for k in
+                   ("session_id", "project", "label", "started_at", "ended_at", "started_cwd")))
+    for event in events:
+        _insert_event(db, event)
+    db.execute("PRAGMA user_version=1")
+
+@contextmanager
+def _transaction(home: Path) -> Iterator[sqlite3.Connection]:
+    with _db(home) as db:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+
+def _active_session_db(db: sqlite3.Connection) -> dict[str, Any] | None:
+    row = db.execute("SELECT * FROM sessions WHERE ended_at IS NULL").fetchone()
+    return {"schema_version": SCHEMA_VERSION, **dict(row)} if row else None
 
 
 def active_session(home: Path) -> dict[str, Any] | None:
-    # State writes use atomic os.replace, so readers never observe a partial JSON file.
-    return _active_session_unlocked(ensure_home(home))
+    with _db(home) as db:
+        return _active_session_db(db)
 
 
 def _session_workdir(session: dict[str, Any]) -> Path:
@@ -77,22 +219,28 @@ def _session_workdir(session: dict[str, Any]) -> Path:
     return Path.cwd().resolve()
 
 
-def _append_event_unlocked(
-    home: Path,
+def _append_event_db(
+    db: sqlite3.Connection,
     event_type: str,
     payload: dict[str, Any] | None = None,
     *,
     event_id: str | None = None,
     session: dict[str, Any] | None = None,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     if session is None:
-        session = _active_session_unlocked(home)
+        session = _active_session_db(db)
+    elif session.get("session_id"):
+        current = _active_session_db(db)
+        if current is None or current["session_id"] != session["session_id"]:
+            raise RuntimeError("Session is no longer active")
+        session = current
 
     event_cwd = _session_workdir(session) if session else Path.cwd().resolve()
     event = {
         "schema_version": SCHEMA_VERSION,
         "id": event_id or _new_id("ev"),
-        "timestamp": now_iso(),
+        "timestamp": timestamp or now_iso(),
         "type": event_type,
         "session_id": session.get("session_id") if session else None,
         "project": session.get("project") if session else None,
@@ -100,12 +248,7 @@ def _append_event_unlocked(
         "payload": payload or {},
     }
 
-    path = _events_path(home)
-    line = json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
-        handle.flush()
-        os.fsync(handle.fileno())
+    _insert_event(db, event)
     return event
 
 
@@ -117,10 +260,11 @@ def append_event(
     event_id: str | None = None,
     session: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    home = ensure_home(home)
-    with ledger_lock(home):
-        return _append_event_unlocked(
-            home,
+    if event_type in {"session_start", "session_end"}:
+        raise ValueError("Use start_session/end_session for lifecycle events")
+    with _transaction(home) as db:
+        return _append_event_db(
+            db,
             event_type,
             payload,
             event_id=event_id,
@@ -174,8 +318,9 @@ def start_session(
     if not session_workdir.is_dir():
         raise FileNotFoundError(f"LabOS work directory does not exist: {session_workdir}")
 
-    with ledger_lock(home):
-        if _active_session_unlocked(home):
+    snapshot = git_snapshot(session_workdir)
+    with _transaction(home) as db:
+        if _active_session_db(db):
             raise RuntimeError(
                 "A LabOS session is already active. End it before starting another."
             )
@@ -188,17 +333,11 @@ def start_session(
             "started_at": now_iso(),
             "started_cwd": str(session_workdir),
         }
-        _atomic_json_write(_state_path(home), state)
-        try:
-            return _append_event_unlocked(
-                home,
-                "session_start",
-                {"label": label, "git": git_snapshot(session_workdir)},
-                session=state,
-            )
-        except Exception:
-            _state_path(home).unlink(missing_ok=True)
-            raise
+        db.execute("INSERT INTO sessions VALUES (?,?,?,?,?,?)", (
+            state["session_id"], project, label, state["started_at"], None, state["started_cwd"]
+        ))
+        return _append_event_db(db, "session_start", {"label": label, "git": snapshot},
+                                session=state, timestamp=state["started_at"])
 
 
 def add_note(home: Path, text: str) -> dict[str, Any]:
@@ -208,37 +347,42 @@ def add_note(home: Path, text: str) -> dict[str, Any]:
 def checkpoint(home: Path, state: str, text: str | None = None) -> dict[str, Any]:
     if state not in {"working", "broken"}:
         raise ValueError("checkpoint state must be 'working' or 'broken'")
-    home = ensure_home(home)
-
-    with ledger_lock(home):
-        session = _active_session_unlocked(home)
-        if session is None:
-            raise RuntimeError("WORKING/BROKEN checkpoints require an active session.")
-        return _append_event_unlocked(
-            home,
+    session = active_session(home)
+    if session is None:
+        raise RuntimeError("WORKING/BROKEN checkpoints require an active session.")
+    snapshot = git_snapshot(_session_workdir(session))
+    with _transaction(home) as db:
+        if _active_session_db(db) != session:
+            raise RuntimeError("Active session changed while capturing Git; retry checkpoint")
+        return _append_event_db(
+            db,
             "checkpoint",
             {
                 "state": state,
                 "text": text,
-                "git": git_snapshot(_session_workdir(session)),
+                "git": snapshot,
             },
             session=session,
         )
 
 
 def end_session(home: Path, text: str | None = None) -> dict[str, Any]:
-    home = ensure_home(home)
-    with ledger_lock(home):
-        session = _active_session_unlocked(home)
-        if session is None:
-            raise RuntimeError("No active LabOS session.")
-        event = _append_event_unlocked(
-            home,
+    session = active_session(home)
+    if session is None:
+        raise RuntimeError("No active LabOS session.")
+    snapshot = git_snapshot(_session_workdir(session))
+    with _transaction(home) as db:
+        if _active_session_db(db) != session:
+            raise RuntimeError("Active session changed while capturing Git; retry end")
+        event = _append_event_db(
+            db,
             "session_end",
-            {"text": text, "git": git_snapshot(_session_workdir(session))},
+            {"text": text, "git": snapshot},
             session=session,
         )
-        _state_path(home).unlink(missing_ok=True)
+        db.execute("UPDATE sessions SET ended_at=? WHERE session_id=? AND ended_at IS NULL", (
+            event["timestamp"], session["session_id"]
+        ))
         return event
 
 
@@ -287,37 +431,29 @@ def attach_artifact(
         payload["storage"] = "managed-copy"
         payload["managed_path"] = str(destination.relative_to(home))
 
-    with ledger_lock(home):
-        return _append_event_unlocked(
-            home,
+    with _transaction(home) as db:
+        return _append_event_db(
+            db,
             "artifact",
             payload,
             event_id=event_id,
         )
 
 
-def _read_events_unlocked(home: Path) -> list[dict[str, Any]]:
-    path = _events_path(home)
-    if not path.exists():
-        return []
-    events: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"Malformed LabOS event at line {line_number}: {exc}"
-                ) from exc
-    return events
+def _decode_event(row: sqlite3.Row) -> dict[str, Any]:
+    return {"id": row["id"], "timestamp": row["timestamp"], "type": row["type"],
+            "session_id": row["session_id"], "project": row["project"],
+            "cwd": row["cwd"], "payload": json.loads(row["payload_json"]),
+            "schema_version": row["schema_version"]}
+
+
+def _read_events_db(db: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [_decode_event(row) for row in db.execute("SELECT * FROM events ORDER BY sequence")]
 
 
 def read_events(home: Path) -> list[dict[str, Any]]:
-    home = ensure_home(home)
-    with ledger_lock(home):
-        return _read_events_unlocked(home)
+    with _db(home) as db:
+        return _read_events_db(db)
 
 
 def iter_events(home: Path) -> Iterable[dict[str, Any]]:
@@ -325,4 +461,33 @@ def iter_events(home: Path) -> Iterable[dict[str, Any]]:
 
 
 def recent_events(home: Path, limit: int = 20) -> list[dict[str, Any]]:
-    return read_events(home)[-limit:]
+    if limit < 1:
+        return []
+    with _db(home) as db:
+        rows = db.execute("SELECT * FROM events ORDER BY sequence DESC LIMIT ?", (limit,)).fetchall()
+        return [_decode_event(row) for row in reversed(rows)]
+
+
+def export_events(home: Path, path: Path | None = None) -> Path:
+    home = ensure_home(home)
+    default_output = home / "exports" / "events.jsonl"
+    output = (path or default_output).expanduser().resolve()
+    if output in (home / "events.jsonl", home / "labos.db",
+                  home / "resources.json", home / "device_knowledge.json",
+                  home / ".active-session.json"):
+        raise ValueError("Export path must not replace LabOS evidence or state")
+    if output.exists() and output != default_output:
+        raise ValueError(f"Export destination already exists: {output}")
+    events = read_events(home)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_name(f"{output.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temp.open("w", encoding="utf-8", newline="\n") as handle:
+            for event in events:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, output)
+    finally:
+        temp.unlink(missing_ok=True)
+    return output

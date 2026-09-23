@@ -10,6 +10,7 @@ from labos.ledger import (
     attach_artifact,
     checkpoint,
     end_session,
+    export_events,
     recent_events,
     start_session,
 )
@@ -52,7 +53,9 @@ def test_session_flow_is_append_only(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert end["payload"]["text"] == "stop for today"
     assert active_session(home) is None
 
-    raw_lines = (home / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert (home / "labos.db").is_file()
+    assert not (home / "events.jsonl").exists()
+    raw_lines = export_events(home).read_text(encoding="utf-8").splitlines()
     assert len(raw_lines) == 5
     assert all(json.loads(line)["schema_version"] == 1 for line in raw_lines)
 

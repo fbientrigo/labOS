@@ -54,7 +54,7 @@ labos device remove "Zynq #2"
 
 ## Device context over time
 
-Session device context is evidence, so changes are represented in `events.jsonl`:
+Session device context is evidence, so changes are represented as events in `labos.db` (portable JSONL via `labos export`):
 
 ```text
 RESOURCE_ADD Zynq #2

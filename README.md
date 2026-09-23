@@ -44,14 +44,19 @@ By default LabOS writes to `~/labos-data`; override it with `LABOS_HOME` or `--h
 
 ```text
 ~/labos-data/
-├── events.jsonl             # append-only raw evidence
+├── labos.db                 # authoritative event history and session state
 ├── resources.json           # mutable current device identity registry
 ├── device_knowledge.json    # explicit human-approved facts / Power Profiles
 ├── artifacts/               # explicit managed copies only
-└── .active-session.json     # mutable convenience state
+└── exports/
+    └── events.jsonl         # deterministic portable export (on demand)
 ```
 
-`events.jsonl` is the source of truth. Each line is ordinary JSON and remains readable without LabOS.
+`labos.db` is the operational source of truth. Session transitions and their events commit together. Run `labos export` to make a portable JSONL snapshot; it is never read as live state. Stop older LabOS processes before upgrading. A legacy root `events.jsonl` is validated and imported automatically on first use, then preserved unchanged. If it is malformed or contradicts `.active-session.json`, LabOS refuses migration and leaves the original files alone. Inspect contradictory evidence before moving any stale state file aside and retrying. Once the database exists, legacy files are ignored.
+
+SQLite uses WAL, `synchronous=FULL`, foreign keys and a five-second busy timeout. Keep the database on a local disk: [SQLite WAL does not support network filesystems](https://sqlite.org/wal.html). Back up the database with SQLite's backup API (or while LabOS is closed), because an active database can include `labos.db-wal`. The existing device registry and approved-fact files remain separate JSON files; the SQLite transaction covers sessions and their events.
+
+For an invalid legacy file, `labos doctor` reports the error and refuses import. To recover explicitly, first preserve its exact bytes under another filename such as `events.damaged.jsonl`, then make a separately reviewed `events.jsonl` containing only complete, verified events. Do not invent a missing START or END. Retry `labos doctor` only when that reviewed file is ready. The importer never performs this repair automatically.
 
 Artifacts are referenced by absolute path by default. `--copy` explicitly places a copy under `artifacts/`. `--hash` computes SHA-256 when the cost is justified.
 
@@ -77,6 +82,8 @@ labos attach PATH [--kind artifact|photo] [--copy] [--hash] [--note TEXT]
 labos end [TEXT...]
 labos status
 labos recent [-n N]
+labos recent [-n N] --json
+labos export [PATH]
 labos device add --fingerprint ID --alias NAME [--kind board|scope|psu|daq|detector|other]
 labos device list
 labos device show TARGET
@@ -96,7 +103,7 @@ The optional `obsidian/` plugin is a thin UX layer over the same CLI and raw evi
 
 ```text
 Terminal ───────┐
-                ├─> LabOS CLI ─> events.jsonl / artifacts
+                ├─> LabOS CLI ─> labos.db / artifacts
 Obsidian panel ─┘
 ```
 
@@ -106,7 +113,7 @@ Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). T
 
 ## Design invariants
 
-- Raw evidence is append-only. Derived knowledge must never silently rewrite it.
+- Database event evidence is append-only. Derived knowledge must never silently rewrite it.
 - Capture must stay faster than opening a conventional ELN entry.
 - Physical facts are not promoted to truth by an LLM.
 - Large files are not copied unless explicitly requested.

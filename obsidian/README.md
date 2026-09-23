@@ -84,7 +84,7 @@ The plugin does not rewrite raw evidence. Device writes also call the same CLI a
 
 ```text
 Obsidian panel ─┐
-                ├─> LabOS CLI ─> events.jsonl / resources.json / device_knowledge.json / artifacts
+                ├─> LabOS CLI ─> labos.db / resources.json / device_knowledge.json / artifacts
 Terminal ───────┘
 ```
 

@@ -96,18 +96,8 @@ export class CliLabOSBackend implements LabOSBackend {
   }
 
   async status(): Promise<SessionState | null> {
-    try {
-      const raw = await readFile(
-        join(this.home(), ".active-session.json"),
-        "utf8",
-      );
-      return JSON.parse(raw) as SessionState;
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) {
-        return null;
-      }
-      throw error;
-    }
+    const raw = await this.run("status");
+    return raw === "No active session." ? null : JSON.parse(raw) as SessionState;
   }
 
   async start(
@@ -474,26 +464,6 @@ export class CliLabOSBackend implements LabOSBackend {
   }
 
   async recent(limit: number): Promise<LabOSEvent[]> {
-    try {
-      const raw = await readFile(join(this.home(), "events.jsonl"), "utf8");
-      const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
-      const events: LabOSEvent[] = [];
-
-      for (const line of lines.slice(-Math.max(limit, 1))) {
-        try {
-          events.push(JSON.parse(line) as LabOSEvent);
-        } catch {
-          // Core reads fail closed; this display helper ignores a single malformed
-          // historical line so the panel can still surface the Doctor action.
-        }
-      }
-
-      return events;
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) {
-        return [];
-      }
-      throw error;
-    }
+    return JSON.parse(await this.run("recent", ["-n", String(limit), "--json"])) as LabOSEvent[];
   }
 }

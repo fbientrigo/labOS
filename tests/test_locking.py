@@ -19,7 +19,7 @@ for index in range(count):
 """
 
 
-def test_cross_process_writers_do_not_corrupt_jsonl(tmp_path: Path) -> None:
+def test_cross_process_writers_do_not_corrupt_sqlite(tmp_path: Path) -> None:
     home = tmp_path / "labos"
     processes = [
         subprocess.Popen(

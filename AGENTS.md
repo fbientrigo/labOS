@@ -8,7 +8,7 @@ Make normal experimental work leave enough cheap evidence to later reconstruct s
 
 ## Phase 0 invariants
 
-1. `events.jsonl` is append-only raw evidence.
+1. `labos.db` contains append-only event evidence and transactional session state; `exports/events.jsonl` is a portable derived export.
 2. Do not silently edit or reinterpret previous raw events.
 3. LabOS must work with no network and no LLM.
 4. LabOS must never automatically commit or push Git repositories.
@@ -22,7 +22,7 @@ Make normal experimental work leave enough cheap evidence to later reconstruct s
 Unless a real Phase 0 failure demonstrates the need, do not add:
 
 - FastAPI or frontend frameworks;
-- SQLite/FTS;
+- FTS;
 - embeddings/vector databases;
 - knowledge graphs/ontologies;
 - background agents/Dreams;
