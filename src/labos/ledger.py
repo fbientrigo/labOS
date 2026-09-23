@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 SCHEMA_VERSION = 1
+CANONICAL_EVENT_FIELDS = frozenset({
+    "schema_version", "id", "timestamp", "type", "session_id", "project", "cwd", "payload"
+})
 
 
 def now_iso() -> str:
@@ -118,14 +121,16 @@ def _validate_legacy(home: Path) -> tuple[list[dict[str, Any]], dict[str, dict[s
 
 
 def _event_row(event: dict[str, Any]) -> tuple[Any, ...]:
+    extra = {key: value for key, value in event.items() if key not in CANONICAL_EVENT_FIELDS}
     return (event["id"], event["timestamp"], event["type"],
             event.get("session_id"), event.get("project"), event["cwd"],
             json.dumps(event["payload"], sort_keys=True, separators=(",", ":"), ensure_ascii=False),
-            event["schema_version"])
+            event["schema_version"],
+            json.dumps(extra, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
 
 def _insert_event(db: sqlite3.Connection, event: dict[str, Any]) -> None:
-    db.execute("INSERT INTO events (id,timestamp,type,session_id,project,cwd,payload_json,schema_version) VALUES (?,?,?,?,?,?,?,?)", _event_row(event))
+    db.execute("INSERT INTO events (id,timestamp,type,session_id,project,cwd,payload_json,schema_version,extra_json) VALUES (?,?,?,?,?,?,?,?,?)", _event_row(event))
 
 
 @contextmanager
@@ -176,7 +181,7 @@ def _initialize(db: sqlite3.Connection, home: Path) -> None:
             id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL,
             type TEXT NOT NULL, session_id TEXT REFERENCES sessions(session_id),
             project TEXT, cwd TEXT NOT NULL, payload_json TEXT NOT NULL,
-            schema_version INTEGER NOT NULL
+            schema_version INTEGER NOT NULL, extra_json TEXT NOT NULL
         )""",
         """CREATE TRIGGER immutable_events_update BEFORE UPDATE ON events
             BEGIN SELECT RAISE(ABORT, 'events are append-only'); END""",
@@ -441,7 +446,10 @@ def attach_artifact(
 
 
 def _decode_event(row: sqlite3.Row) -> dict[str, Any]:
-    return {"id": row["id"], "timestamp": row["timestamp"], "type": row["type"],
+    extra = json.loads(row["extra_json"])
+    if not isinstance(extra, dict):
+        raise RuntimeError("Invalid LabOS event extras in database")
+    return {**extra, "id": row["id"], "timestamp": row["timestamp"], "type": row["type"],
             "session_id": row["session_id"], "project": row["project"],
             "cwd": row["cwd"], "payload": json.loads(row["payload_json"]),
             "schema_version": row["schema_version"]}
