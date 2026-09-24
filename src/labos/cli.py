@@ -21,6 +21,7 @@ from .ledger import (
     checkpoint,
     default_home,
     end_session,
+    export_events,
     recent_events,
     start_session,
 )
@@ -130,6 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     recent = sub.add_parser("recent", help="Show recent evidence events.")
     recent.add_argument("-n", "--limit", type=int, default=20)
+    recent.add_argument("--json", action="store_true", dest="as_json")
+
+    export = sub.add_parser("export", help="Export portable events.jsonl from SQLite.")
+    export.add_argument("path", nargs="?", type=Path, help="Defaults to HOME/exports/events.jsonl.")
 
     device = sub.add_parser("device", help="Manage persistent physical devices.")
     device_sub = device.add_subparsers(dest="device_command", required=True)
@@ -227,7 +232,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser(
         "doctor",
-        help="Check ledger integrity, locking, and local agent CLI availability.",
+        help="Check SQLite integrity, session state, paths and local agent CLIs.",
     )
     doctor.add_argument("--json", action="store_true", dest="as_json")
     doctor.add_argument(
@@ -293,8 +298,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(json.dumps(state, indent=2, sort_keys=True))
         elif args.command == "recent":
-            for event in recent_events(home, args.limit):
-                print(_short_event(event))
+            events = recent_events(home, args.limit)
+            if args.as_json:
+                print(json.dumps(events, sort_keys=True))
+            else:
+                for event in events:
+                    print(_short_event(event))
+        elif args.command == "export":
+            print(export_events(home, args.path))
         elif args.command == "device":
             if args.device_command == "add":
                 resource = add_resource(

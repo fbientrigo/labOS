@@ -9,7 +9,7 @@ LabOS treats reporting as a derived layer over immutable experimental evidence. 
 No AI is required.
 
 ```text
-events.jsonl
+labos.db
     -> deterministic Session Record
     -> generated.md / report.md / main.tex
 ```
@@ -214,9 +214,9 @@ labos doctor --provider codex --provider claude
 Doctor checks:
 
 - LabOS home is writable;
-- the cross-process ledger lock can be acquired;
-- the event ledger parses cleanly;
-- active-session state parses cleanly;
+- the SQLite integrity check passes and its schema version is supported;
+- session rows and lifecycle events agree;
+- artifacts and exports directories are writable;
 - requested agent executables are resolvable;
 - CLI versions when discoverable;
 - whether model identity is explicitly pinned.
@@ -282,7 +282,7 @@ labos report \
 
 The following remain invariants:
 
-- report generation never rewrites `events.jsonl`;
+- report generation never rewrites the event history in `labos.db`;
 - deterministic evidence works without AI;
 - evidence supplied to agents is treated as untrusted data rather than instructions;
 - AI is not allowed to silently promote a physical fact into stable truth;

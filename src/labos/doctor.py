@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .agents import SUPPORTED_PROVIDERS, AgentRunner, SubprocessAgentRunner
-from .ledger import active_session, ensure_home, read_events
-from .locking import ledger_lock
+from .ledger import _db, _read_events_db, ensure_home
 
 
 def labos_version() -> str:
@@ -37,40 +36,40 @@ def run_doctor(
     except OSError as exc:
         checks.append({"id": "home_writable", "ok": False, "detail": str(exc)})
 
-    try:
-        with ledger_lock(home, timeout_seconds=2):
-            pass
-        checks.append({"id": "ledger_lock", "ok": True, "detail": "acquired"})
-    except Exception as exc:
-        checks.append({"id": "ledger_lock", "ok": False, "detail": str(exc)})
+    for dirname in ("artifacts", "exports"):
+        directory = home / dirname
+        try:
+            directory.mkdir(exist_ok=True)
+            probe = directory / f".doctor-{uuid.uuid4().hex}.tmp"
+            probe.write_text("labos\n", encoding="utf-8")
+            probe.unlink()
+            checks.append({"id": f"{dirname}_writable", "ok": True, "detail": str(directory)})
+        except OSError as exc:
+            checks.append({"id": f"{dirname}_writable", "ok": False, "detail": str(exc)})
 
     try:
-        events = read_events(home)
-        checks.append(
-            {
-                "id": "ledger_parse",
-                "ok": True,
-                "detail": f"{len(events)} events",
-            }
-        )
+        with _db(home) as db:
+            check = db.execute("PRAGMA integrity_check").fetchone()[0]
+            checks.append({"id": "sqlite_integrity", "ok": check == "ok", "detail": check})
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            checks.append({"id": "schema_version", "ok": version == 1, "detail": str(version)})
+            events = _read_events_db(db)
+            checks.append({"id": "events_readable", "ok": True, "detail": f"{len(events)} events"})
+            foreign_keys = db.execute("PRAGMA foreign_key_check").fetchall()
+            rows = db.execute("""SELECT s.session_id, s.ended_at,
+                  SUM(CASE WHEN e.type='session_start' THEN 1 ELSE 0 END) AS starts,
+                  SUM(CASE WHEN e.type='session_end' THEN 1 ELSE 0 END) AS ends
+                  FROM sessions s LEFT JOIN events e ON e.session_id=s.session_id
+                  GROUP BY s.session_id""").fetchall()
+            active = sum(row["ended_at"] is None for row in rows)
+            valid = not foreign_keys and active <= 1 and all(
+                row["starts"] == 1 and row["ends"] == (0 if row["ended_at"] is None else 1)
+                for row in rows
+            )
+            checks.append({"id": "session_invariants", "ok": valid,
+                           "detail": f"{len(rows)} sessions, {active} active, {len(foreign_keys)} FK errors"})
     except Exception as exc:
-        checks.append({"id": "ledger_parse", "ok": False, "detail": str(exc)})
-
-    try:
-        state = active_session(home)
-        checks.append(
-            {
-                "id": "session_state",
-                "ok": True,
-                "detail": (
-                    str(state.get("session_id"))
-                    if state
-                    else "no active session"
-                ),
-            }
-        )
-    except Exception as exc:
-        checks.append({"id": "session_state", "ok": False, "detail": str(exc)})
+        checks.append({"id": "database", "ok": False, "detail": str(exc)})
 
     agents: dict[str, object] = {}
     for provider in providers:

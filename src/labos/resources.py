@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import (
-    _active_session_unlocked,
-    _append_event_unlocked,
+    _active_session_db,
+    _append_event_db,
     _atomic_json_write,
     _new_id,
-    _read_events_unlocked,
+    _read_events_db,
+    _transaction,
     ensure_home,
     now_iso,
 )
@@ -203,39 +204,31 @@ def _session_active_resources(
 def use_resource(home: Path, target: str) -> dict[str, Any]:
     home = ensure_home(home)
     with ledger_lock(home):
-        session = _active_session_unlocked(home)
-        if session is None:
-            raise RuntimeError("Using a device requires an active LabOS session.")
-        resource = _resolve_unlocked(home, target)
-        events = _read_events_unlocked(home)
-        active = _session_active_resources(events, str(session["session_id"]))
-        if resource["resource_id"] in active:
-            raise RuntimeError(f"Device is already active: {resource['alias']}")
-        return _append_event_unlocked(
-            home,
-            "resource_add",
-            _snapshot(resource),
-            session=session,
-        )
+        with _transaction(home) as db:
+            session = _active_session_db(db)
+            if session is None:
+                raise RuntimeError("Using a device requires an active LabOS session.")
+            resource = _resolve_unlocked(home, target)
+            events = _read_events_db(db)
+            active = _session_active_resources(events, str(session["session_id"]))
+            if resource["resource_id"] in active:
+                raise RuntimeError(f"Device is already active: {resource['alias']}")
+            return _append_event_db(db, "resource_add", _snapshot(resource), session=session)
 
 
 def remove_resource(home: Path, target: str) -> dict[str, Any]:
     home = ensure_home(home)
     with ledger_lock(home):
-        session = _active_session_unlocked(home)
-        if session is None:
-            raise RuntimeError("Removing a device requires an active LabOS session.")
-        resource = _resolve_unlocked(home, target)
-        events = _read_events_unlocked(home)
-        active = _session_active_resources(events, str(session["session_id"]))
-        if resource["resource_id"] not in active:
-            raise RuntimeError(f"Device is not active: {resource['alias']}")
-        return _append_event_unlocked(
-            home,
-            "resource_remove",
-            _snapshot(resource),
-            session=session,
-        )
+        with _transaction(home) as db:
+            session = _active_session_db(db)
+            if session is None:
+                raise RuntimeError("Removing a device requires an active LabOS session.")
+            resource = _resolve_unlocked(home, target)
+            events = _read_events_db(db)
+            active = _session_active_resources(events, str(session["session_id"]))
+            if resource["resource_id"] not in active:
+                raise RuntimeError(f"Device is not active: {resource['alias']}")
+            return _append_event_db(db, "resource_remove", _snapshot(resource), session=session)
 
 
 def resource_context_timeline(

@@ -2,6 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from labos.doctor import run_doctor
 from labos.ledger import read_events
 
 
@@ -19,7 +20,7 @@ for index in range(count):
 """
 
 
-def test_cross_process_writers_do_not_corrupt_jsonl(tmp_path: Path) -> None:
+def test_cross_process_writers_do_not_corrupt_sqlite(tmp_path: Path) -> None:
     home = tmp_path / "labos"
     processes = [
         subprocess.Popen(
@@ -41,3 +42,4 @@ def test_cross_process_writers_do_not_corrupt_jsonl(tmp_path: Path) -> None:
     assert {f"a-{i}" for i in range(15)} <= texts
     assert {f"b-{i}" for i in range(15)} <= texts
     assert {f"c-{i}" for i in range(15)} <= texts
+    assert run_doctor(home, providers=[])["core_ok"] is True
