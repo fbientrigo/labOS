@@ -44,6 +44,17 @@ This creates `main.js`.
 
 ## Install into a vault
 
+Use the repository-root installer to build and install/update LabOS CLI and
+the plugin together:
+
+```bash
+python install.py "<vault-path>"
+```
+
+Run it again after pulling updates. It preserves plugin settings, vault notes,
+attachments and the evidence home. Reload Obsidian after installation; a first
+install still requires enabling LabOS under Community plugins.
+
 Create:
 
 ```text

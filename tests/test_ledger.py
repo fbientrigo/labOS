@@ -1,9 +1,11 @@
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from labos import ledger
 from labos.ledger import (
     active_session,
     add_note,
@@ -41,6 +43,7 @@ def test_session_flow_is_append_only(tmp_path: Path, monkeypatch: pytest.MonkeyP
     events = recent_events(home, 20)
     assert [event["type"] for event in events] == [
         "session_start",
+        "setup_snapshot",
         "note",
         "checkpoint",
         "checkpoint",
@@ -56,7 +59,7 @@ def test_session_flow_is_append_only(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert (home / "labos.db").is_file()
     assert not (home / "events.jsonl").exists()
     raw_lines = export_events(home).read_text(encoding="utf-8").splitlines()
-    assert len(raw_lines) == 5
+    assert len(raw_lines) == 6
     assert all(json.loads(line)["schema_version"] == 1 for line in raw_lines)
 
 
@@ -101,15 +104,20 @@ def test_note_can_exist_without_active_session(tmp_path: Path) -> None:
     assert event["project"] is None
 
 
-def test_artifact_reference_does_not_copy_by_default(tmp_path: Path) -> None:
+@pytest.mark.parametrize("hash_file", [False, True])
+def test_artifact_reference_does_not_copy_by_default(tmp_path: Path, hash_file: bool) -> None:
     home = tmp_path / "labos"
     source = tmp_path / "scope.csv"
     source.write_text("t,v\n0,1\n", encoding="utf-8")
 
-    event = attach_artifact(home, source)
+    event = attach_artifact(home, source, hash_file=hash_file)
 
     assert event["payload"]["storage"] == "reference"
     assert event["payload"]["source_path"] == str(source.resolve())
+    if hash_file:
+        assert event["payload"]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    else:
+        assert "sha256" not in event["payload"]
     assert list((home / "artifacts").iterdir()) == []
 
 
@@ -124,6 +132,27 @@ def test_artifact_managed_copy_and_hash(tmp_path: Path) -> None:
     assert managed.read_bytes() == source.read_bytes()
     assert event["payload"]["kind"] == "photo"
     assert len(event["payload"]["sha256"]) == 64
+
+
+def test_artifact_copy_hash_matches_saved_bytes_if_source_changes_during_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "labos"
+    source = tmp_path / "scope.bin"
+    source.write_bytes(b"before")
+    original_copy2 = ledger.shutil.copy2
+
+    def change_before_copy(src: Path, dst: Path) -> str:
+        source.write_bytes(b"after")
+        return original_copy2(src, dst)
+
+    monkeypatch.setattr(ledger.shutil, "copy2", change_before_copy)
+    event = attach_artifact(home, source, copy=True, hash_file=True)
+    managed = home / event["payload"]["managed_path"]
+
+    assert managed.read_bytes() == b"after"
+    assert event["payload"]["sha256"] == hashlib.sha256(managed.read_bytes()).hexdigest()
 
 
 def test_cannot_start_two_sessions(tmp_path: Path) -> None:

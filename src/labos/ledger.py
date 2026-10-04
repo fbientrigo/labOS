@@ -325,7 +325,12 @@ def start_session(
     project: str,
     label: str | None = None,
     workdir: Path | None = None,
+    setup: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from .logbook import validate_setup
+
+    setup = setup if setup is not None else {"devices": [], "connections": []}
+    validate_setup(setup)
     home = ensure_home(home)
     session_workdir = (workdir or Path.cwd()).expanduser().resolve()
     if not session_workdir.is_dir():
@@ -349,33 +354,70 @@ def start_session(
         db.execute("INSERT INTO sessions VALUES (?,?,?,?,?,?)", (
             state["session_id"], project, label, state["started_at"], None, state["started_cwd"]
         ))
-        return _append_event_db(db, "session_start", {"label": label, "git": snapshot},
-                                session=state, timestamp=state["started_at"])
+        event = _append_event_db(db, "session_start", {"label": label, "git": snapshot},
+                                 session=state, timestamp=state["started_at"])
+        _append_event_db(db, "setup_snapshot", {"setup": setup}, session=state)
+        for device in setup["devices"]:
+            resource_id = str(device.get("resource_id") or device.get("id"))
+            _append_event_db(db, "resource_add", {
+                "resource_id": resource_id,
+                "fingerprint": device["fingerprint"],
+                "alias": device["alias"],
+                "kind": device["kind"],
+            }, session=state)
+        return event
 
 
 def add_note(home: Path, text: str) -> dict[str, Any]:
     return append_event(home, "note", {"text": text})
 
 
-def checkpoint(home: Path, state: str, text: str | None = None) -> dict[str, Any]:
+def checkpoint(home: Path, state: str, text: str | None = None, *, tag: str | None = None,
+               occurred_at: str | None = None, links: list[dict[str, str]] | None = None,
+               setup: dict[str, Any] | None = None, historical_session_id: str | None = None) -> dict[str, Any]:
     if state not in {"working", "broken"}:
         raise ValueError("checkpoint state must be 'working' or 'broken'")
     session = active_session(home)
     if session is None:
         raise RuntimeError("WORKING/BROKEN checkpoints require an active session.")
+    explicit_occurrence = occurred_at is not None
+    if historical_session_id and not explicit_occurrence:
+        raise ValueError("historical session selection requires an explicit occurrence date/time")
+    if explicit_occurrence:
+        from .logbook import _iso, validate_setup
+        occurred_at = _iso(occurred_at)
+        if setup is not None:
+            validate_setup(setup)
     snapshot = git_snapshot(_session_workdir(session))
     with _transaction(home) as db:
         if _active_session_db(db) != session:
             raise RuntimeError("Active session changed while capturing Git; retry checkpoint")
+        if historical_session_id and not db.execute(
+            "SELECT session_id FROM sessions WHERE session_id=?", (historical_session_id,)
+        ).fetchone():
+            raise ValueError("selected historical session does not exist")
+        payload = {
+            "state": state,
+            "text": text,
+            "git": snapshot,
+            "tag": tag,
+            "occurred_at": occurred_at or now_iso(),
+            "links": links or [],
+            "git_captured_at": now_iso(),
+            "git_capture_session_id": session["session_id"],
+        }
+        if not explicit_occurrence:
+            setup_row = db.execute("SELECT payload_json FROM events WHERE type='setup_snapshot' ORDER BY sequence DESC LIMIT 1").fetchone()
+            payload["setup"] = json.loads(setup_row["payload_json"]).get("setup") if setup_row else None
+        else:
+            payload["setup"] = setup
+            if historical_session_id:
+                payload["historical_session_id"] = historical_session_id
         return _append_event_db(
             db,
             "checkpoint",
-            {
-                "state": state,
-                "text": text,
-                "git": snapshot,
-            },
-            session=session,
+            payload,
+            session={} if explicit_occurrence else session,
         )
 
 
@@ -433,9 +475,6 @@ def attach_artifact(
         "note": note,
     }
 
-    if hash_file:
-        payload["sha256"] = _sha256(source)
-
     if copy:
         destination_dir = home / "artifacts" / event_id
         destination_dir.mkdir(parents=True, exist_ok=False)
@@ -443,6 +482,9 @@ def attach_artifact(
         shutil.copy2(source, destination)
         payload["storage"] = "managed-copy"
         payload["managed_path"] = str(destination.relative_to(home))
+
+    if hash_file:
+        payload["sha256"] = _sha256(destination if copy else source)
 
     with _transaction(home) as db:
         return _append_event_db(

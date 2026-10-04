@@ -22,6 +22,9 @@ import type {
   ReportTask,
   SessionRecordResult,
   SessionState,
+  SetupSnapshot,
+  SetupHistoryItem,
+  SessionChoice,
 } from "./types";
 
 function expandHome(path: string): string {
@@ -101,26 +104,35 @@ export class CliLabOSBackend implements LabOSBackend {
   }
 
   async start(
-    project: string,
-    label?: string,
-    workdir?: string,
-  ): Promise<void> {
-    const args = [project];
+      project: string,
+      label?: string,
+      workdir?: string,
+      setup?: SetupSnapshot,
+    ): Promise<void> {
+      const args = [project];
     if (label) {
       args.push("--label", label);
     }
-    if (workdir) {
-      args.push("--cwd", workdir);
-    }
-    await this.run("start", args);
+      if (workdir) {
+        args.push("--cwd", workdir);
+      }
+      if (setup) args.push("--setup-json", JSON.stringify(setup));
+      await this.run("start", args);
   }
 
   async note(text: string): Promise<void> {
     await this.run("note", [text]);
   }
 
-  async checkpoint(state: CheckpointState, text?: string): Promise<void> {
-    await this.run(state === "working" ? "good" : "bad", text ? [text] : []);
+  async checkpoint(state: CheckpointState, text?: string, options: { tag?: string; occurredAt?: string; links?: Array<{ title: string; path?: string; kind?: string }>; setup?: SetupSnapshot; sessionId?: string } = {}): Promise<LabOSEvent> {
+    const args = [...(text ? [text] : [])];
+    if (options.tag) args.push("--tag", options.tag);
+    if (options.occurredAt) args.push("--at", options.occurredAt);
+    if (options.links?.length) args.push("--links-json", JSON.stringify(options.links));
+    if (options.setup) args.push("--setup-json", JSON.stringify(options.setup));
+    if (options.sessionId) args.push("--session-id", options.sessionId);
+    args.push("--json");
+    return JSON.parse(await this.run(state === "working" ? "good" : "bad", args)) as LabOSEvent;
   }
 
   async attach(path: string, kind: "artifact" | "photo"): Promise<void> {
@@ -465,5 +477,83 @@ export class CliLabOSBackend implements LabOSBackend {
 
   async recent(limit: number): Promise<LabOSEvent[]> {
     return JSON.parse(await this.run("recent", ["-n", String(limit), "--json"])) as LabOSEvent[];
+  }
+
+  async setup(): Promise<SetupSnapshot> {
+    return JSON.parse(await this.run("setup", ["get"])) as SetupSnapshot;
+  }
+
+  async saveSetup(value: SetupSnapshot): Promise<void> {
+    await this.run("setup", ["set", "--json", JSON.stringify(value)]);
+  }
+
+  async capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent> {
+    const args = ["--kind", input.kind ?? "note"];
+    if (input.tag) args.push("--tag", input.tag);
+    if (input.occurredAt) args.push("--at", input.occurredAt);
+    if (input.target) args.push("--target", input.target);
+    if (input.current !== undefined) args.push("--current", String(input.current));
+    if (input.unit) args.push("--unit", input.unit);
+    if (input.voltage !== undefined) args.push("--voltage", String(input.voltage));
+    if (input.links?.length) args.push("--links-json", JSON.stringify(input.links));
+    if (input.sessionId) args.push("--session-id", input.sessionId);
+    if (input.setup) args.push("--setup-json", JSON.stringify(input.setup));
+    if (input.text) args.push(input.text);
+    return JSON.parse(await this.run("capture", args)) as LabOSEvent;
+  }
+
+  async day(day: string, options: { sessionId?: string; tag?: string; search?: string; offset?: number; limit?: number } = {}): Promise<LabOSEvent[]> {
+    const args = [day, "--offset", String(options.offset ?? 0), "--limit", String(options.limit ?? 100)];
+    if (options.sessionId) args.push("--session-id", options.sessionId);
+    if (options.tag) args.push("--tag", options.tag);
+    if (options.search) args.push("--search", options.search);
+    return JSON.parse(await this.run("log", args)) as LabOSEvent[];
+  }
+
+  async revise(entryId: string, changes: Record<string, unknown>): Promise<void> {
+    await this.run("revise", [entryId, "--changes-json", JSON.stringify(changes)]);
+  }
+
+  async assetRename(oldPath: string, newPath: string): Promise<void> {
+    await this.run("asset", ["rename", oldPath, newPath]);
+  }
+
+  async tags(day: string): Promise<Array<{ name: string; color: string }>> {
+    return JSON.parse(await this.run("tag", ["list", day])) as Array<{ name: string; color: string }>;
+  }
+
+  async setTag(day: string, name: string, color: string): Promise<void> {
+    await this.run("tag", ["set", day, name, color]);
+  }
+
+  async retag(day: string, oldTag: string, newTag: string): Promise<void> {
+    await this.run("tag", ["retag", day, oldTag, newTag]);
+  }
+
+  async setupHistory(): Promise<SetupHistoryItem[]> {
+    return JSON.parse(await this.run("setup", ["history"])) as SetupHistoryItem[];
+  }
+
+  async sessions(): Promise<SessionChoice[]> {
+    return JSON.parse(await this.run("sessions")) as SessionChoice[];
+  }
+
+  async syncMarkdown(path: string, apply = false, removeIds: string[] = []): Promise<Awaited<ReturnType<LabOSBackend["syncMarkdown"]>>> {
+    const args = [path];
+    if (apply) args.push("--apply");
+    for (const id of removeIds) args.push("--remove-id", id);
+    return JSON.parse(await this.run("sync-log", args)) as Awaited<ReturnType<LabOSBackend["syncMarkdown"]>>;
+  }
+
+  async writeDailyLog(day: string, path: string): Promise<void> {
+    await this.run("markdown", [day, path]);
+  }
+
+  async dailyLogId(day: string): Promise<string> {
+    return (await this.run("log-id", [day])).trim();
+  }
+
+  async assetMap(): Promise<Record<string, string>> {
+    return JSON.parse(await this.run("asset-map")) as Record<string, string>;
   }
 }

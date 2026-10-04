@@ -76,6 +76,43 @@ The deterministic Session Record derives a per-event resource context only from 
 
 Sessions that predate resources remain valid. Their resource context is simply unrecorded.
 
+## Lab setup snapshots and measurements
+
+Setup cards support `som` (System on Module), `soc` (System on Chip),
+`carrier`, `module`, `programmer`, `cable`, and `computer`, alongside the
+existing kinds. A custom kind can be registered as a resource. Cable records
+have ordinary stable resource identities, so the adapter and its endpoints
+can be reconstructed independently.
+
+The setup canvas records complete device identities, layout, connections and
+activation state (`active`, `inactive`, or `unknown`) as `setup_snapshot`
+events. Replacing or removing a card updates session resource state in the
+same transaction. Each observation or measurement retains the setup that was
+current when it was captured; later wiring changes do not rewrite old entries.
+New sessions default to an empty setup. Obsidian offers an explicit carry-over
+choice; the CLI accepts `start --setup-json JSON` to confirm a saved setup.
+Measurements record a whole-setup, device, or named-rail target, current in A
+or mA, optional voltage, tag, links and occurrence time. Values are never
+summed or inferred.
+
+The Today page browses local calendar days, with explicit session filtering,
+tag filtering, search and pagination. A historical capture requires an
+occurrence time; historical session and setup association are selected
+explicitly. Sessionless notes remain available. Entries can be revised,
+retagged, or removed by append-only revision events.
+
+`LabOS/Logs/YYYY-MM-DD.md` contains stable LabOS log and entry IDs. The managed
+entry block can be refreshed while surrounding vault text remains untouched.
+Use **Update log in LabOS** to preview recognized edits; removing entries
+requires confirmation. Log links use native Obsidian links and attachment
+references follow recorded rename events. Missing referenced assets remain
+visible as missing; LabOS does not copy them unless explicitly attached.
+
+Run `python install.py "<vault-path>"` at the repository root to build and
+install/update the CLI and plugin. The installer keeps plugin settings and
+vault files, updates only `main.js`, `manifest.json`, and `styles.css`, and
+uses a managed per-user Python environment. Reload Obsidian after it finishes.
+
 ## Obsidian device interface
 
 Phase B exposes the resource model as a first-class operational interface in Obsidian:

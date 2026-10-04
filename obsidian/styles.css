@@ -416,6 +416,40 @@
   width: fit-content;
 }
 
+.labos-setup-canvas {
+  position: relative;
+  min-height: 250px;
+  overflow: auto;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+.labos-setup-wires { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.labos-setup-wire { stroke: var(--interactive-accent); stroke-width: 2.5; }
+.labos-setup-wire-preview { stroke: var(--text-muted); stroke-width: 2; stroke-dasharray: 5 4; }
+.labos-setup-card { z-index: 1; }
+.labos-setup-selected { outline: 2px solid var(--interactive-accent); }
+.labos-setup-handle { align-self: flex-end; padding: 0 5px; min-height: 1.4em; line-height: 1; }
+
+.labos-setup-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 140px;
+  padding: 8px;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  cursor: grab;
+}
+
+.labos-setup-card:active { cursor: grabbing; }
+.labos-connection { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.labos-connection span { cursor: pointer; overflow-wrap: anywhere; }
+.labos-image-previews { display: flex; flex-wrap: wrap; gap: 6px; }
+.labos-paste-preview { max-width: 160px; max-height: 120px; object-fit: contain; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s); }
+
 
 .labos-approved-item {
   border-top: 1px solid var(--background-modifier-border);

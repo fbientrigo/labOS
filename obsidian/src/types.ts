@@ -9,7 +9,10 @@ export type ReportStatus =
   | "FAILED"
   | "CANCELLED";
 
-export type DeviceKind = "board" | "scope" | "psu" | "daq" | "detector" | "other";
+export type DeviceKind = string;
+export interface SetupSnapshot { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>>; }
+export interface SetupHistoryItem { event_id: string; timestamp: string; session_id: string | null; setup: SetupSnapshot; }
+export interface SessionChoice { session_id: string; project: string | null; started_at: string; ended_at: string | null; }
 
 export interface DeviceResource {
   resource_id: string;
@@ -97,6 +100,9 @@ export interface LabOSEvent {
   project: string | null;
   cwd: string;
   payload: Record<string, unknown>;
+  effective_payload?: Record<string, unknown>;
+  revision?: LabOSEvent | null;
+  revision_history?: LabOSEvent[];
 }
 
 export interface CoverageItem {
@@ -191,12 +197,27 @@ export interface ReportTask {
 
 export interface LabOSBackend {
   status(): Promise<SessionState | null>;
-  start(project: string, label?: string, workdir?: string): Promise<void>;
+  start(project: string, label?: string, workdir?: string, setup?: SetupSnapshot): Promise<void>;
   note(text: string): Promise<void>;
-  checkpoint(state: CheckpointState, text?: string): Promise<void>;
+  checkpoint(state: CheckpointState, text?: string, options?: { tag?: string; occurredAt?: string; links?: Array<{ title: string; path?: string; kind?: string }>; setup?: SetupSnapshot; sessionId?: string }): Promise<LabOSEvent>;
   attach(path: string, kind: "artifact" | "photo"): Promise<void>;
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
+  setup(): Promise<SetupSnapshot>;
+  saveSetup(value: SetupSnapshot): Promise<void>;
+  capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent>;
+  day(day: string, options?: { sessionId?: string; tag?: string; search?: string; offset?: number; limit?: number }): Promise<LabOSEvent[]>;
+  revise(entryId: string, changes: Record<string, unknown>): Promise<void>;
+  assetRename(oldPath: string, newPath: string): Promise<void>;
+  tags(day: string): Promise<Array<{ name: string; color: string }>>;
+  setTag(day: string, name: string, color: string): Promise<void>;
+  retag(day: string, oldTag: string, newTag: string): Promise<void>;
+  setupHistory(): Promise<SetupHistoryItem[]>;
+  sessions(): Promise<SessionChoice[]>;
+  syncMarkdown(path: string, apply?: boolean, removeIds?: string[]): Promise<{ status: string; changed: string[]; changed_details?: Array<{ entry_id: string; changes: Record<string, { before: unknown; after: unknown }> }>; new: Array<Record<string, unknown>>; removed: string[]; events: string[]; text_diff?: string }>;
+  writeDailyLog(day: string, path: string): Promise<void>;
+  dailyLogId(day: string): Promise<string>;
+  assetMap(): Promise<Record<string, string>>;
   record(sessionId?: string): Promise<SessionRecordResult>;
   devices(): Promise<DeviceResource[]>;
   addDevice(input: {

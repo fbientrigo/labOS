@@ -17,7 +17,7 @@ from .ledger import (
 from .locking import ledger_lock
 
 RESOURCE_REGISTRY_VERSION = 1
-RESOURCE_KINDS = ("board", "scope", "psu", "daq", "detector", "other")
+RESOURCE_KINDS = ("som", "carrier", "module", "programmer", "cable", "computer", "board", "scope", "psu", "daq", "detector", "other")
 
 
 def _registry_path(home: Path) -> Path:
@@ -33,9 +33,6 @@ def _clean(value: str, field: str) -> str:
 
 def _validate_kind(kind: str) -> str:
     kind = _clean(kind, "kind")
-    if kind not in RESOURCE_KINDS:
-        choices = ", ".join(RESOURCE_KINDS)
-        raise ValueError(f"kind must be one of: {choices}")
     return kind
 
 

@@ -18,6 +18,21 @@ A session is only a convenient human interval. Notes can exist without one. Ever
 - `artifact`
 - `session_end`
 
+The LabOS setup and daily log extension adds append-only `setup_snapshot`,
+`measurement`, `entry_revision`, `tag_definition`, `asset_rename`, and
+`markdown_edit` events. Measurements and observations retain their original
+setup snapshot; corrections are revisions that point to the original event.
+Occurrence time is stored separately from the event's save timestamp.
+Checkpoint Git capture has separate save-time provenance (`git_captured_at`
+and `git_capture_session_id`); a historical association never backdates Git.
+Markdown logs are generated views, with stable IDs and managed entry markers;
+notes outside the managed block remain user-owned.
+
+Session Record derived data is version 4. It includes effective, date-filtered
+entries and their revision histories while retaining the raw event stream and
+the original Git snapshots. Older evidence is not supplemented with guessed
+setup, tag, or measurement data.
+
 Git state is captured on session boundaries and checkpoints because those are the moments where state comparison has the highest expected value.
 
 ## What to measure

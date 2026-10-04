@@ -161,7 +161,7 @@ def test_session_record_resource_context_is_deterministic(tmp_path: Path) -> Non
 
     assert first == second
     assert evidence_sha256(first) == evidence_sha256(second)
-    assert first["record_version"] == 2
+    assert first["record_version"] == 4
     assert first["resource_context"]["by_event"][note["id"]][0]["resource_id"] == device["resource_id"]
 
 

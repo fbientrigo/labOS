@@ -17,18 +17,29 @@ import type {
   DeviceResource,
   DoctorResult,
   LabOSEvent,
+  LabOSBackend,
   ReportMode,
   ReportProgress,
   ReportTask,
   SessionRecordResult,
   SessionState,
+  SetupHistoryItem,
+  SessionChoice,
+  SetupSnapshot,
 } from "./types";
 
 export const VIEW_TYPE_LABOS = "labos-active-session";
 
-type LabOSPage = "today" | "devices" | "reports";
+type LabOSPage = "today" | "setup" | "devices" | "reports";
 
 const DEVICE_KINDS: DeviceKind[] = [
+  "som",
+  "soc",
+  "carrier",
+  "module",
+  "programmer",
+  "cable",
+  "computer",
   "board",
   "scope",
   "psu",
@@ -36,6 +47,12 @@ const DEVICE_KINDS: DeviceKind[] = [
   "detector",
   "other",
 ];
+
+function kindLabel(kind: string): string {
+  if (kind === "som") return "System on Module (SoM)";
+  if (kind === "soc") return "System on Chip (SoC)";
+  return kind;
+}
 
 function payloadString(event: LabOSEvent, key: string): string {
   const value = event.payload[key];
@@ -45,6 +62,13 @@ function payloadString(event: LabOSEvent, key: string): string {
 function eventText(event: LabOSEvent): string {
   if (event.type === "note") {
     return payloadString(event, "text");
+  }
+  if (event.type === "measurement") {
+    const target = payloadString(event, "target") || "setup";
+    const current = event.payload.current;
+    const unit = payloadString(event, "unit");
+    const voltage = event.payload.voltage;
+    return `${target}: ${String(current ?? "")} ${unit}${typeof voltage === "number" ? " · " + String(voltage) + " V" : ""}${payloadString(event, "text") ? " · " + payloadString(event, "text") : ""}`;
   }
   if (event.type === "checkpoint") {
     const state = payloadString(event, "state").toUpperCase();
@@ -76,7 +100,7 @@ function eventTime(timestamp: string): string {
   if (Number.isNaN(date.getTime())) {
     return timestamp;
   }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function eventDateTime(timestamp: string): string {
@@ -84,7 +108,7 @@ function eventDateTime(timestamp: string): string {
   if (Number.isNaN(date.getTime())) {
     return timestamp;
   }
-  return date.toLocaleString();
+  return date.toLocaleString([], { dateStyle: "short", timeStyle: "medium", hour12: false });
 }
 
 function isPhoto(file: TFile): boolean {
@@ -170,6 +194,21 @@ export class LabOSView extends ItemView {
   private selectedDeviceId: string | null = null;
   private preselectedStartDeviceIds = new Set<string>();
   private deviceRegistryError: string | null = null;
+  private selectedDay = new Date().toLocaleDateString("en-CA");
+  private followsToday = true;
+  private daySearch = "";
+  private dayTag = "";
+  private dayOffset = 0;
+  private setupSaveQueue: Promise<void> = Promise.resolve();
+  private currentWorkTag = "";
+  private daySession = "";
+  private pendingImages: Array<{ title: string; path: string; kind: string }> = [];
+  private dayTagColors = new Map<string, string>();
+  private history: SetupHistoryItem[] = [];
+  private sessionChoices: SessionChoice[] = [];
+  private historicalSessionSelect: HTMLSelectElement | null = null;
+  private historicalSetupSelect: HTMLSelectElement | null = null;
+  private selectedCardId: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -191,6 +230,9 @@ export class LabOSView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.registerInterval(window.setInterval(() => {
+      if (this.followsToday && this.selectedDay !== new Date().toLocaleDateString("en-CA")) void this.refresh();
+    }, 60_000));
     await this.refresh();
   }
 
@@ -202,14 +244,28 @@ export class LabOSView extends ItemView {
 
     this.renderHeader(contentEl);
     this.renderNavigation(contentEl);
+    this.renderPendingMarkdown(contentEl);
     this.renderDoctorStatus(contentEl);
 
     try {
       const backend = this.plugin.getBackend();
-      const [session, events] = await Promise.all([
+      if (this.followsToday) {
+        const today = new Date().toLocaleDateString("en-CA");
+        if (today !== this.selectedDay) this.dayOffset = 0;
+        this.selectedDay = today;
+      }
+      const [session, events, setup, tags, colorSuggestions, assetMap, history, sessionChoices] = await Promise.all([
         backend.status(),
-        backend.recent(this.plugin.settings.recentLimit),
+        backend.day(this.selectedDay, { limit: 100, offset: this.dayOffset, tag: this.dayTag || undefined, search: this.daySearch || undefined, sessionId: this.daySession || undefined }),
+        backend.setup(),
+        backend.tags(this.selectedDay),
+        backend.tags("*"),
+        backend.assetMap(),
+        backend.setupHistory(),
+        backend.sessions(),
       ]);
+      this.history = history;
+      this.sessionChoices = sessionChoices;
 
       let devices: DeviceResource[] = [];
       this.deviceRegistryError = null;
@@ -218,6 +274,16 @@ export class LabOSView extends ItemView {
       } catch (error) {
         this.deviceRegistryError =
           error instanceof Error ? error.message : String(error);
+      }
+
+      const measurementTargets = ["setup", ...devices.map((device) => device.alias)];
+      if (this.page === "today") {
+        for (const device of devices) {
+          try {
+            const profileKnowledge = await backend.deviceKnowledge(device.resource_id);
+            for (const profile of profileKnowledge.power_profiles) measurementTargets.push(...profile.rails.map((rail) => device.alias + " / " + rail.label));
+          } catch { /* Power profiles are optional context. */ }
+        }
       }
 
       if (this.deviceRegistryError) {
@@ -249,7 +315,9 @@ export class LabOSView extends ItemView {
       }
 
       if (this.page === "today") {
-        this.renderToday(contentEl, session, record, devices, events);
+        this.renderToday(contentEl, session, record, devices, events, setup, tags, colorSuggestions, assetMap, measurementTargets);
+      } else if (this.page === "setup") {
+        this.renderSetup(contentEl, session !== null, devices, setup);
       } else if (this.page === "devices") {
         this.renderDevices(
           contentEl,
@@ -315,7 +383,8 @@ export class LabOSView extends ItemView {
   private renderNavigation(container: HTMLElement): void {
     const nav = container.createDiv({ cls: "labos-nav" });
     for (const [page, label] of [
-      ["today", "Today"],
+      ["today", "Logs"],
+      ["setup", "Setup"],
       ["devices", "Devices"],
       ["reports", "Reports"],
     ] as Array<[LabOSPage, string]>) {
@@ -383,19 +452,226 @@ export class LabOSView extends ItemView {
     record: SessionRecordResult | null,
     devices: DeviceResource[],
     events: LabOSEvent[],
+    setup: { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>> },
+    tags: Array<{ name: string; color: string }>,
+    colorSuggestions: Array<{ name: string; color: string }>,
+    assetMap: Record<string, string>,
+    measurementTargets: string[],
   ): void {
+    this.dayTagColors = new Map(tags.map((item) => [item.name, item.color]));
     if (session) {
-      this.renderActiveSession(container, session, record, devices);
+      this.renderActiveSession(container, session, record, devices, measurementTargets, tags);
       if (record) {
         this.renderCoverage(container, record);
       }
     } else {
-      this.renderStart(container, devices);
+      this.renderStart(container, devices, setup);
     }
-    this.renderTimeline(container, events, session);
+    this.renderDayControls(container, events, tags, colorSuggestions);
+    if (!session) {
+      const quick = container.createDiv({ cls: "labos-section labos-stack" });
+      quick.createEl("h3", { text: "Quick note" });
+      this.renderHistoricalControls(quick);
+      const input = quick.createEl("textarea", { cls: "labos-textarea", attr: { placeholder: "Observation (works without a session)" } });
+      const occurrence = quick.createEl("input", { cls: "labos-input", attr: { type: "datetime-local", "aria-label": "Occurrence date and time" } });
+      occurrence.value = this.defaultOccurrence(this.selectedDay);
+      const preview = quick.createDiv({ cls: "labos-image-previews" });
+      input.addEventListener("paste", (event) => void this.pasteImages(event, preview));
+      const tag = this.createWorkTagSelector(quick, tags);
+      const save = quick.createEl("button", { text: "Capture note" });
+      save.addEventListener("click", () => void this.captureNote(input, tag.value, occurrence.value, this.historicalSessionSelect?.value, this.selectedHistoricalSetup()));
+    }
+    this.renderTimeline(container, events, session, setup, assetMap);
   }
 
-  private renderStart(container: HTMLElement, devices: DeviceResource[]): void {
+  private renderPendingMarkdown(container: HTMLElement): void {
+    if (!this.plugin.hasPendingLogUpdates) return;
+    const row = container.createDiv({ cls: "labos-warning labos-actions", text: "Evidence is saved; a daily Markdown log update needs retry." });
+    const retry = row.createEl("button", { text: "Retry log update" });
+    retry.addEventListener("click", () => void this.plugin.retryDailyLogs());
+  }
+
+  private async captureWithMarkdown(input: Parameters<LabOSBackend["capture"]>[0]): Promise<void> {
+    const event = await this.plugin.getBackend().capture(input);
+    const logUpdated = await this.plugin.writeDailyLogForEvent(event);
+    if (!logUpdated) new Notice("Evidence saved; daily Markdown log needs an update. Use Retry log update.", 10000);
+  }
+
+  private saveSetupSnapshot(setup: SetupSnapshot): Promise<void> {
+    const snapshot = JSON.parse(JSON.stringify(setup)) as SetupSnapshot;
+    new Notice("Saving setup…");
+    const save = this.setupSaveQueue.catch(() => undefined).then(async () => {
+      await this.plugin.getBackend().saveSetup(snapshot);
+      new Notice("Setup saved.");
+    });
+    this.setupSaveQueue = save;
+    return save;
+  }
+
+  private createWorkTagSelector(parent: HTMLElement, tags: Array<{ name: string; color: string }>): HTMLSelectElement {
+    const select = parent.createEl("select", { cls: "labos-select", attr: { "aria-label": "Current work tag" } });
+    select.createEl("option", { value: "", text: "No work tag" });
+    for (const tag of tags) select.createEl("option", { value: tag.name, text: tag.name });
+    select.value = this.currentWorkTag;
+    select.addEventListener("change", () => { this.currentWorkTag = select.value; });
+    return select;
+  }
+
+  private defaultOccurrence(day: string): string {
+    const now = new Date();
+    return `${day}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  }
+  private renderDayControls(container: HTMLElement, entries: LabOSEvent[], tagDefinitions: Array<{ name: string; color: string }>, colorSuggestions: Array<{ name: string; color: string }>): void {
+    const row = container.createDiv({ cls: "labos-actions labos-section" });
+    const prev = row.createEl("button", { text: "‹ Previous" });
+    prev.addEventListener("click", () => { const date = new Date(this.selectedDay + "T12:00:00"); date.setDate(date.getDate() - 1); this.selectedDay = date.toLocaleDateString("en-CA"); this.followsToday = false; this.dayOffset = 0; void this.refresh(); });
+    const picker = row.createEl("input", { attr: { type: "date" } }); picker.value = this.selectedDay;
+    picker.addEventListener("change", () => { this.selectedDay = picker.value; this.followsToday = false; this.dayOffset = 0; void this.refresh(); });
+    const next = row.createEl("button", { text: "Next ›" });
+    next.addEventListener("click", () => { const date = new Date(this.selectedDay + "T12:00:00"); date.setDate(date.getDate() + 1); this.selectedDay = date.toLocaleDateString("en-CA"); this.followsToday = false; this.dayOffset = 0; void this.refresh(); });
+    const today = row.createEl("button", { text: "Today" });
+    today.addEventListener("click", () => { this.followsToday = true; this.selectedDay = new Date().toLocaleDateString("en-CA"); this.dayOffset = 0; void this.refresh(); });
+    const search = row.createEl("input", { cls: "labos-input", attr: { placeholder: "Search this day" } }); search.value = this.daySearch;
+    search.addEventListener("change", () => { this.daySearch = search.value.trim(); this.dayOffset = 0; void this.refresh(); });
+    const tag = row.createEl("select", { cls: "labos-select" });
+    tag.createEl("option", { value: "", text: "All tags" });
+    for (const value of Array.from(new Set([...tagDefinitions.map((item) => item.name), ...colorSuggestions.map((item) => item.name), ...entries.map((event) => String(event.payload.tag ?? ""))].filter(Boolean)))) tag.createEl("option", { value, text: value });
+    tag.value = this.dayTag; tag.addEventListener("change", () => { this.dayTag = tag.value; this.dayOffset = 0; void this.refresh(); });
+    const session = row.createEl("select", { cls: "labos-select" });
+    session.createEl("option", { value: "", text: "All sessions" });
+    for (const item of this.sessionChoices) session.createEl("option", { value: item.session_id, text: (item.project ?? "Session") + " · " + item.started_at });
+    session.value = this.daySession; session.addEventListener("change", () => { this.daySession = session.value; this.dayOffset = 0; void this.refresh(); });
+    const tagName = row.createEl("input", { cls: "labos-input", attr: { placeholder: "Define tag" } });
+    const color = row.createEl("input", { cls: "labos-input", attr: { type: "text", placeholder: "#3388cc", title: "Tag color in HEX", list: "labos-tag-colors" } }); color.value = tagDefinitions[0]?.color ?? "#3388cc";
+    const colorOptions = row.createEl("datalist", { attr: { id: "labos-tag-colors" } });
+    for (const value of Array.from(new Set(colorSuggestions.map((item) => item.color)))) colorOptions.createEl("option", { value });
+    tagName.setAttribute("list", "labos-tag-names");
+    const tagNames = row.createEl("datalist", { attr: { id: "labos-tag-names" } });
+    for (const value of Array.from(new Set(colorSuggestions.map((item) => item.name)))) tagNames.createEl("option", { value });
+    tagName.addEventListener("change", () => {
+      const suggestion = [...colorSuggestions].reverse().find((item) => item.name === tagName.value.trim());
+      if (suggestion) color.value = suggestion.color;
+    });
+    const defineTag = row.createEl("button", { text: "Set tag color" });
+    defineTag.addEventListener("click", () => { if (!tagName.value.trim() || !/^#[0-9a-f]{6}$/i.test(color.value)) { new Notice("Enter a tag name and six-digit HEX color."); return; } void this.act(async () => this.plugin.getBackend().setTag(this.selectedDay, tagName.value.trim(), color.value)); });
+    if (this.dayTag) {
+      const retag = row.createEl("button", { text: "Bulk retag filtered entries" });
+      retag.addEventListener("click", () => { const next = window.prompt("New tag name", ""); if (next !== null) void this.act(async () => this.plugin.getBackend().retag(this.selectedDay, this.dayTag, next)); });
+    }
+    const older = row.createEl("button", { text: "Older entries" }); older.disabled = entries.length < 100;
+    older.addEventListener("click", () => { this.dayOffset += 100; void this.refresh(); });
+    if (this.dayOffset > 0) { const newer = row.createEl("button", { text: "Newer entries" }); newer.addEventListener("click", () => { this.dayOffset = Math.max(0, this.dayOffset - 100); void this.refresh(); }); }
+  }
+
+  private renderSetup(container: HTMLElement, active: boolean, devices: DeviceResource[], setup: { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>> }): void {
+    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    section.createEl("h2", { text: "Hardware setup" });
+    section.createDiv({ cls: "labos-muted", text: "Drag cards to arrange them. Connect two device names below; wiring is saved as one complete snapshot." });
+    if (!active) { section.createDiv({ cls: "labos-warning", text: "Setup edits require an active session. The last recorded setup remains visible." }); }
+    const canvas = section.createDiv({ cls: "labos-setup-canvas" });
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "labos-setup-wires");
+    canvas.appendChild(svg);
+    const cards = new Map<string, HTMLElement>();
+    for (const [index, item] of setup.devices.entries()) {
+      const card = canvas.createDiv({ cls: "labos-setup-card" });
+      const id = String(item.resource_id ?? item.id ?? index);
+      card.dataset.id = id;
+      cards.set(id, card);
+      if (this.selectedCardId === id) card.addClass("labos-setup-selected");
+      card.style.left = String(item.x ?? 16 + index * 150) + "px";
+      card.style.top = String(item.y ?? 16) + "px";
+      card.createEl("strong", { text: String(item.alias ?? item.name ?? id) });
+      card.createDiv({ cls: "labos-muted", text: String(item.kind ?? "device") });
+      const activation = card.createEl("select", { cls: "labos-select" });
+      for (const value of ["unknown", "active", "inactive"]) activation.createEl("option", { value, text: value });
+      activation.value = String(item.activation ?? "unknown");
+      activation.disabled = !active;
+      activation.addEventListener("change", () => { item.activation = activation.value; void this.act(async () => this.saveSetupSnapshot(setup)); });
+      const mode = card.createEl("input", { cls: "labos-input", attr: { placeholder: "Operating mode (optional)" } });
+      mode.value = String(item.mode ?? ""); mode.disabled = !active;
+      mode.addEventListener("change", () => { item.mode = mode.value; void this.act(async () => this.saveSetupSnapshot(setup)); });
+      card.addEventListener("click", () => { this.selectedCardId = id; for (const node of cards.values()) node.toggleClass("labos-setup-selected", node === card); });
+      card.addEventListener("pointerdown", (event) => { if (!active || (event.target instanceof Element && event.target.closest("button,input,select"))) return; const rect = card.getBoundingClientRect(); const dx = event.clientX - rect.left; const dy = event.clientY - rect.top; const startX = item.x ?? Number.parseInt(card.style.left); const startY = item.y ?? Number.parseInt(card.style.top); card.setPointerCapture(event.pointerId); const move = (e: PointerEvent) => { const bounds = canvas.getBoundingClientRect(); card.style.left = Math.max(0, e.clientX - bounds.left - dx) + "px"; card.style.top = Math.max(0, e.clientY - bounds.top - dy) + "px"; this.drawSetupWires(svg, setup, cards); }; const cleanup = () => { card.removeEventListener("pointermove", move); card.removeEventListener("pointerup", end); card.removeEventListener("pointercancel", cancel); }; const end = () => { cleanup(); item.x = Number.parseInt(card.style.left); item.y = Number.parseInt(card.style.top); void this.act(async () => this.saveSetupSnapshot(setup)); }; const cancel = () => { cleanup(); card.style.left = String(startX) + "px"; card.style.top = String(startY) + "px"; this.drawSetupWires(svg, setup, cards); }; card.addEventListener("pointermove", move); card.addEventListener("pointerup", end, { once: true }); card.addEventListener("pointercancel", cancel, { once: true }); });
+      const handle = card.createEl("button", { cls: "labos-setup-handle", text: "●", attr: { type: "button", title: "Drag to connect" } });
+      handle.disabled = !active;
+      handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault(); event.stopPropagation();
+        const move = (e: PointerEvent) => { const source = card.getBoundingClientRect(); const bounds = canvas.getBoundingClientRect(); this.drawSetupWires(svg, setup, cards); const line = document.createElementNS("http://www.w3.org/2000/svg", "line"); line.setAttribute("x1", String(source.right - bounds.left)); line.setAttribute("y1", String(source.top + source.height / 2 - bounds.top)); line.setAttribute("x2", String(e.clientX - bounds.left)); line.setAttribute("y2", String(e.clientY - bounds.top)); line.setAttribute("class", "labos-setup-wire-preview"); svg.appendChild(line); };
+        const cancel = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", cancel); this.drawSetupWires(svg, setup, cards); };
+        const finish = (e: PointerEvent) => { cancel(); const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>(".labos-setup-card"); if (!target || target === card || !target.dataset.id) return; const fromPort = window.prompt("Source endpoint / port", ""); if (fromPort === null) return; const toPort = window.prompt("Destination endpoint / port", ""); if (toPort === null) return; void this.act(async () => { setup.connections.push({ id: String(Date.now()), from: id, to: target.dataset.id, from_port: fromPort, to_port: toPort }); await this.saveSetupSnapshot(setup); }); };
+        window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish, { once: true }); window.addEventListener("pointercancel", cancel, { once: true });
+      });
+    }
+    this.drawSetupWires(svg, setup, cards);
+    const controls = section.createDiv({ cls: "labos-actions" });
+    const from = controls.createEl("select", { cls: "labos-select" }); const to = controls.createEl("select", { cls: "labos-select" });
+    for (const device of devices) for (const select of [from, to]) select.createEl("option", { value: device.resource_id, text: device.alias });
+    const connect = controls.createEl("button", { text: "Connect" });
+    connect.disabled = !active;
+    connect.addEventListener("click", () => {
+      if (from.value === to.value) { new Notice("Choose two different devices."); return; }
+      if (![from.value, to.value].every((id) => setup.devices.some((item) => String(item.resource_id ?? item.id) === id))) {
+        new Notice("Add both devices to the setup before connecting them."); return;
+      }
+      const fromPort = window.prompt("Endpoint label / port on first device", "");
+      if (fromPort === null) return;
+      const toPort = window.prompt("Endpoint label / port on second device", "");
+      if (toPort === null) return;
+      void this.act(async () => { setup.connections.push({ id: String(Date.now()), from: from.value, to: to.value, from_port: fromPort, to_port: toPort }); await this.saveSetupSnapshot(setup); });
+    });
+    const add = controls.createEl("button", { text: "Add device" }); add.disabled = !active;
+    add.addEventListener("click", () => {
+      const device = devices.find((candidate) => candidate.resource_id === from.value);
+      if (!device) return;
+      if (setup.devices.some((item) => String(item.resource_id ?? item.id) === device.resource_id)) {
+        new Notice("This device is already in the setup."); return;
+      }
+      void this.act(async () => { setup.devices.push({ resource_id: device.resource_id, fingerprint: device.fingerprint, alias: device.alias, kind: device.kind, x: 16 + setup.devices.length * 150, y: 16, activation: "unknown" }); await this.saveSetupSnapshot(setup); });
+    });
+    const replace = controls.createEl("button", { text: "Replace device" }); replace.disabled = !active;
+    replace.addEventListener("click", () => {
+      const oldId = window.prompt("Identity of the device to replace");
+      const device = devices.find((candidate) => candidate.resource_id === from.value);
+      const previous = setup.devices.find((item) => String(item.resource_id ?? item.id) === oldId || String(item.alias) === oldId);
+      if (!oldId || !device || !previous) return;
+      if (setup.devices.some((item) => item !== previous && String(item.resource_id ?? item.id) === device.resource_id)) {
+        new Notice("The replacement device is already in the setup."); return;
+      }
+      void this.act(async () => { const newId = device.resource_id; const replacement = { ...previous, resource_id: newId, fingerprint: device.fingerprint, alias: device.alias, kind: device.kind }; setup.devices = setup.devices.map((item) => item === previous ? replacement : item); for (const edge of setup.connections) { if (edge.from === oldId || edge.from === previous.resource_id) edge.from = newId; if (edge.to === oldId || edge.to === previous.resource_id) edge.to = newId; } await this.saveSetupSnapshot(setup); });
+    });
+    const remove = controls.createEl("button", { text: "Remove selected" }); remove.disabled = !active;
+    remove.addEventListener("click", () => { const selected = this.selectedCardId; if (selected) void this.act(async () => { setup.devices = setup.devices.filter((device) => String(device.resource_id ?? device.id) !== selected); setup.connections = setup.connections.filter((edge) => edge.from !== selected && edge.to !== selected); this.selectedCardId = null; await this.saveSetupSnapshot(setup); }); });
+    const wires = section.createDiv({ cls: "labos-stack" });
+    for (const edge of setup.connections) {
+      const line = wires.createDiv({ cls: "labos-connection" });
+      const label = line.createSpan({ text: String(edge.from) + "." + String(edge.from_port ?? "") + " ↔ " + String(edge.to) + "." + String(edge.to_port ?? "") });
+      label.addEventListener("click", () => { if (!active) return; const a = window.prompt("First endpoint label", String(edge.from_port ?? "")); if (a === null) return; const b = window.prompt("Second endpoint label", String(edge.to_port ?? "")); if (b === null) return; edge.from_port = a; edge.to_port = b; void this.act(async () => this.saveSetupSnapshot(setup)); });
+      const disconnect = line.createEl("button", { text: "Disconnect" }); disconnect.disabled = !active;
+      disconnect.addEventListener("click", () => void this.act(async () => { setup.connections = setup.connections.filter((candidate) => candidate !== edge); await this.saveSetupSnapshot(setup); }));
+    }
+  }
+
+  private drawSetupWires(svg: SVGSVGElement, setup: { connections: Array<Record<string, unknown>> }, cards: Map<string, HTMLElement>): void {
+    svg.replaceChildren();
+    svg.setAttribute("width", String(svg.parentElement?.clientWidth ?? 0));
+    svg.setAttribute("height", String(svg.parentElement?.clientHeight ?? 0));
+    for (const edge of setup.connections) {
+      const from = cards.get(String(edge.from));
+      const to = cards.get(String(edge.to));
+      if (!from || !to) continue;
+      const x1 = Number.parseFloat(from.style.left) + from.offsetWidth;
+      const y1 = Number.parseFloat(from.style.top) + from.offsetHeight / 2;
+      const x2 = Number.parseFloat(to.style.left);
+      const y2 = Number.parseFloat(to.style.top) + to.offsetHeight / 2;
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(x1)); line.setAttribute("y1", String(y1));
+      line.setAttribute("x2", String(x2)); line.setAttribute("y2", String(y2));
+      line.setAttribute("class", "labos-setup-wire"); svg.appendChild(line);
+    }
+  }
+
+  private renderStart(container: HTMLElement, devices: DeviceResource[], lastSetup: { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>> }): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
     section.createEl("h3", { text: "Start work" });
 
@@ -415,6 +691,10 @@ export class LabOSView extends ItemView {
       attr: { placeholder: "Repo/work directory for Git snapshots (optional)" },
     });
     workdir.value = this.plugin.settings.defaultWorkdir;
+
+    const carryLabel = section.createEl("label", { cls: "labos-device-choice" });
+    const carrySetup = carryLabel.createEl("input", { type: "checkbox" });
+    carryLabel.createSpan({ text: "Use the last recorded hardware setup for this session" });
 
     const selected = new Set(this.preselectedStartDeviceIds);
     this.preselectedStartDeviceIds.clear();
@@ -490,9 +770,12 @@ export class LabOSView extends ItemView {
           projectValue,
           label.value.trim() || undefined,
           workdir.value.trim() || undefined,
+          carrySetup.checked ? lastSetup : { devices: [], connections: [] },
         );
+        const carriedIds = new Set(carrySetup.checked ? lastSetup.devices.map((item) => String(item.resource_id ?? item.id)) : []);
         const failures: string[] = [];
         for (const resourceId of selected) {
+          if (carriedIds.has(resourceId)) continue;
           try {
             await backend.useDevice(resourceId);
           } catch (error) {
@@ -517,6 +800,8 @@ export class LabOSView extends ItemView {
     session: SessionState,
     record: SessionRecordResult | null,
     devices: DeviceResource[],
+    measurementTargets: string[],
+    tags: Array<{ name: string; color: string }>,
   ): void {
     const section = container.createDiv({ cls: "labos-section labos-stack" });
 
@@ -541,33 +826,53 @@ export class LabOSView extends ItemView {
       cls: "labos-textarea",
       attr: { placeholder: "Quick note..." },
     });
+    this.renderHistoricalControls(section);
+    const imagePreviews = section.createDiv({ cls: "labos-image-previews" });
+    capture.addEventListener("paste", (event) => void this.pasteImages(event, imagePreviews));
+    const workTag = section.createEl("input", { cls: "labos-input", attr: { placeholder: "Work tag (optional)" } });
+    const captureAt = section.createEl("input", { cls: "labos-input", attr: { type: "datetime-local" } });
 
     const actions = section.createDiv({ cls: "labos-actions" });
     const noteButton = actions.createEl("button", { text: "Add note" });
     noteButton.addEventListener("click", () => {
-      void this.captureNote(capture);
+      void this.captureNote(capture, workTag.value, captureAt.value, this.historicalSessionSelect?.value, this.selectedHistoricalSetup());
     });
+
+    const measure = section.createDiv({ cls: "labos-device-panel labos-stack" });
+    measure.createEl("strong", { text: "Current measurement" });
+    const target = measure.createEl("input", { cls: "labos-input", attr: { placeholder: "Whole setup, device, or named rail", list: "labos-measure-targets" } });
+    const targetList = measure.createEl("datalist", { attr: { id: "labos-measure-targets" } });
+    for (const value of measurementTargets) targetList.createEl("option", { value });
+    target.value = "setup";
+    const currentInput = measure.createEl("input", { cls: "labos-input", attr: { type: "number", min: "0", step: "any", placeholder: "Current" } });
+    const unit = measure.createEl("select", { cls: "labos-select" }); unit.createEl("option", { value: "mA", text: "mA" }); unit.createEl("option", { value: "A", text: "A" });
+    const voltage = measure.createEl("input", { cls: "labos-input", attr: { type: "number", step: "any", placeholder: "Voltage (optional)" } });
+    const measurement = measure.createEl("textarea", { cls: "labos-textarea", attr: { placeholder: "Measurement note" } });
+    const measurePreview = measure.createDiv({ cls: "labos-image-previews" });
+    measurement.addEventListener("paste", (event) => void this.pasteImages(event, measurePreview));
+    const captureMeasurement = measure.createEl("button", { text: "Capture measurement" });
+    captureMeasurement.addEventListener("click", () => void this.act(async () => { const value = Number(currentInput.value); if (!currentInput.value || !Number.isFinite(value)) throw new Error("Enter a valid current value."); const activeFile = this.app.workspace.getActiveFile(); const links = [...(activeFile ? [{ title: activeFile.basename, path: activeFile.path }] : []), ...this.pendingImages]; const occurrence = captureAt.value || (!this.followsToday ? this.defaultOccurrence(this.selectedDay) : undefined); await this.captureWithMarkdown({ kind: "measurement", text: measurement.value, tag: workTag.value || undefined, target: target.value || "setup", current: value, unit: unit.value as "A" | "mA", voltage: voltage.value ? Number(voltage.value) : undefined, occurredAt: occurrence ? new Date(occurrence).toISOString() : undefined, links, sessionId: this.historicalSessionSelect?.value || undefined, setup: this.selectedHistoricalSetup() }); this.pendingImages = []; currentInput.value = ""; voltage.value = ""; measurement.value = ""; }));
 
     const working = actions.createEl("button", { text: "✓ Working" });
     working.addEventListener("click", () => {
-      void this.captureCheckpoint("working", capture);
+      void this.captureCheckpoint("working", capture, workTag.value, captureAt.value);
     });
 
     const broken = actions.createEl("button", { text: "✗ Broken" });
     broken.addEventListener("click", () => {
-      void this.captureCheckpoint("broken", capture);
+      void this.captureCheckpoint("broken", capture, workTag.value, captureAt.value);
     });
 
     capture.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
-        void this.captureNote(capture);
+        void this.captureNote(capture, workTag.value, captureAt.value, this.historicalSessionSelect?.value, this.selectedHistoricalSetup());
       }
     });
 
     const attachActions = section.createDiv({ cls: "labos-actions" });
     const current = attachActions.createEl("button", {
-      text: "Attach current note",
+      text: "Link current note",
     });
     current.addEventListener("click", () => {
       const file = this.app.workspace.getActiveFile();
@@ -575,13 +880,13 @@ export class LabOSView extends ItemView {
         new Notice("No active vault file.");
         return;
       }
-      void this.attachVaultFile(file);
+      void this.linkVaultFile(file);
     });
 
-    const choose = attachActions.createEl("button", { text: "Choose vault file" });
+    const choose = attachActions.createEl("button", { text: "Link vault file" });
     choose.addEventListener("click", () => {
       new VaultFilePicker(this.app, (file) => {
-        void this.attachVaultFile(file);
+        void this.linkVaultFile(file);
       }).open();
     });
 
@@ -781,8 +1086,10 @@ export class LabOSView extends ItemView {
     });
     const kind = form.createEl("select", { cls: "labos-select" });
     for (const value of DEVICE_KINDS) {
-      kind.createEl("option", { value, text: value });
+      kind.createEl("option", { value, text: kindLabel(value) });
     }
+    kind.createEl("option", { value: "custom", text: "Custom kind…" });
+    const customKind = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Custom kind" } });
 
     const add = form.createEl("button", { text: "Add device" });
     add.addEventListener("click", () => {
@@ -796,7 +1103,7 @@ export class LabOSView extends ItemView {
         const device = await this.plugin.getBackend().addDevice({
           fingerprint: fp,
           alias: name,
-          kind: kind.value as DeviceKind,
+          kind: kind.value === "custom" ? customKind.value.trim() : kind.value as DeviceKind,
         });
         this.selectedDeviceId = device.resource_id;
         new Notice("Device registered: " + device.alias);
@@ -1149,41 +1456,96 @@ export class LabOSView extends ItemView {
     );
   }
 
-  private async captureNote(textarea: HTMLTextAreaElement): Promise<void> {
+  private async captureNote(textarea: HTMLTextAreaElement, tag?: string, occurredAt?: string, sessionId?: string, setup?: SetupSnapshot): Promise<void> {
     const text = textarea.value.trim();
     if (!text) {
       return;
     }
     await this.act(async () => {
-      await this.plugin.getBackend().note(text);
+      const activeFile = this.app.workspace.getActiveFile();
+      const links = [
+        ...(activeFile ? [{ title: activeFile.basename, path: activeFile.path }] : []),
+        ...this.pendingImages,
+      ];
+      const occurrence = occurredAt || (!this.followsToday ? this.defaultOccurrence(this.selectedDay) : undefined);
+      await this.captureWithMarkdown({ text, tag: tag || undefined, occurredAt: occurrence ? new Date(occurrence).toISOString() : undefined, links, sessionId: sessionId || undefined, setup });
+      this.pendingImages = [];
       textarea.value = "";
     });
+  }
+
+  private renderHistoricalControls(container: HTMLElement): void {
+    const row = container.createDiv({ cls: "labos-actions" });
+    const session = row.createEl("select", { cls: "labos-select" });
+    session.createEl("option", { value: "", text: "No historical session" });
+    for (const item of this.sessionChoices) session.createEl("option", { value: item.session_id, text: (item.project ?? "Session") + " · " + item.started_at });
+    const setup = row.createEl("select", { cls: "labos-select" });
+    setup.createEl("option", { value: "", text: "No setup selected" });
+    this.history.forEach((item, index) => setup.createEl("option", { value: String(index), text: item.timestamp + " · " + item.event_id.slice(-6) }));
+    this.historicalSessionSelect = session;
+    this.historicalSetupSelect = setup;
+  }
+
+  private selectedHistoricalSetup(): SetupSnapshot | undefined {
+    const value = this.historicalSetupSelect?.value;
+    return value ? this.history[Number(value)]?.setup : undefined;
+  }
+
+  private async pasteImages(event: ClipboardEvent, preview: HTMLElement): Promise<void> {
+    const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+    event.preventDefault();
+    const activeFile = this.app.workspace.getActiveFile();
+    for (const file of files) {
+      try {
+        const path = await this.app.fileManager.getAvailablePathForAttachment(file.name, activeFile?.path);
+        await this.app.vault.createBinary(path, await file.arrayBuffer());
+        this.pendingImages.push({ title: file.name, path, kind: "image" });
+        const image = preview.createEl("img", { cls: "labos-paste-preview", attr: { src: URL.createObjectURL(file), alt: file.name } });
+        image.addEventListener("load", () => URL.revokeObjectURL(image.src), { once: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        new Notice("Could not save pasted image: " + message, 8000);
+      }
+    }
   }
 
   private async captureCheckpoint(
     state: "working" | "broken",
     textarea: HTMLTextAreaElement,
+    tag?: string,
+    occurredAt?: string,
   ): Promise<void> {
     const text = textarea.value.trim();
     await this.act(async () => {
-      await this.plugin.getBackend().checkpoint(state, text || undefined);
+      if (this.historicalSessionSelect?.value && !occurredAt) throw new Error("Choose an occurrence date/time before selecting a historical session.");
+      const file = this.app.workspace.getActiveFile();
+      const links = [...(file ? [{ title: file.basename, path: file.path }] : []), ...this.pendingImages];
+      const event = await this.plugin.getBackend().checkpoint(state, text || undefined, {
+        tag: tag || undefined,
+        occurredAt: occurredAt ? new Date(occurredAt).toISOString()
+          : !this.followsToday ? new Date(this.defaultOccurrence(this.selectedDay)).toISOString() : undefined,
+        links,
+        sessionId: this.historicalSessionSelect?.value || undefined,
+        setup: (occurredAt || !this.followsToday) ? this.selectedHistoricalSetup() : undefined,
+      });
+      const logUpdated = await this.plugin.writeDailyLogForEvent(event);
       textarea.value = "";
-      new Notice(state === "working" ? "Marked working." : "Marked broken.");
+      this.pendingImages = [];
+      new Notice(!logUpdated
+        ? "Checkpoint saved; daily log update failed. Use Retry log update."
+        : state === "working" ? "Marked working." : "Marked broken.");
     });
   }
 
-  private async attachVaultFile(file: TFile): Promise<void> {
-    const adapter = this.app.vault.adapter;
-    if (!(adapter instanceof FileSystemAdapter)) {
-      new Notice("LabOS file attachment currently requires Obsidian desktop.");
-      return;
-    }
-    const fullPath = adapter.getFullPath(file.path);
+  private async linkVaultFile(file: TFile): Promise<void> {
     await this.act(async () => {
-      await this.plugin
-        .getBackend()
-        .attach(fullPath, isPhoto(file) ? "photo" : "artifact");
-      new Notice("Attached: " + file.name);
+      const event = await this.plugin.getBackend().capture({
+        text: "",
+        links: [{ title: file.basename, path: file.path, kind: isPhoto(file) ? "image" : "note" }],
+      });
+      const logUpdated = await this.plugin.writeDailyLogForEvent(event);
+      new Notice(logUpdated ? "Linked: " + file.name : "Linked, but the daily log update failed. Use Retry log update.");
     });
   }
 
@@ -1279,13 +1641,13 @@ export class LabOSView extends ItemView {
     container: HTMLElement,
     events: LabOSEvent[],
     session: SessionState | null,
+    currentSetup: SetupSnapshot,
+    assetMap: Record<string, string>,
   ): void {
     const section = container.createDiv({ cls: "labos-section" });
-    section.createEl("h3", { text: session ? "This session" : "Recent" });
+    section.createEl("h3", { text: this.selectedDay + " · Daily log" });
 
-    const visible = session
-      ? events.filter((event) => event.session_id === session.session_id)
-      : events;
+    const visible = events;
 
     if (visible.length === 0) {
       section.createDiv({
@@ -1295,8 +1657,11 @@ export class LabOSView extends ItemView {
       return;
     }
 
-    for (const event of visible.slice().reverse()) {
+    for (const event of visible) {
       const row = section.createDiv({ cls: "labos-event" });
+      const tagged = String(event.effective_payload?.tag ?? event.payload.tag ?? "");
+      const definition = tagged ? this.dayTagColors.get(tagged) : undefined;
+      if (definition) row.style.borderLeft = "3px solid " + definition;
       const head = row.createDiv({ cls: "labos-event-head" });
       head.createSpan({
         cls: "labos-event-kind",
@@ -1304,9 +1669,42 @@ export class LabOSView extends ItemView {
       });
       head.createSpan({
         cls: "labos-event-time",
-        text: eventTime(event.timestamp),
+        text: eventTime(String(event.payload.occurred_at ?? event.timestamp)),
       });
-      row.createDiv({ text: eventText(event) });
+      const effective = (event as LabOSEvent & { effective_payload?: Record<string, unknown> }).effective_payload;
+      const shown = effective ? { ...event, payload: effective } : event;
+      row.createDiv({ text: eventText(shown) });
+      if (event.type === "measurement") {
+        const oldSetup = shown.payload.setup as SetupSnapshot | null | undefined;
+        const changed = oldSetup ? JSON.stringify(oldSetup) !== JSON.stringify(currentSetup) : true;
+        row.createDiv({ cls: "labos-event-time", text: changed ? "Original wiring context · not the current setup" : "Measured with the current setup" });
+        if (oldSetup) {
+          const details = row.createEl("details"); details.createEl("summary", { text: "Setup at measurement" });
+          details.createEl("pre", { text: JSON.stringify(oldSetup, null, 2) });
+        }
+      }
+      const links = Array.isArray(shown.payload.links) ? shown.payload.links as Array<{ title?: string; path?: string; kind?: string }> : [];
+      for (const link of links) {
+        if (!link.path) continue;
+        let resolvedPath = link.path;
+        const visited = new Set<string>();
+        while (!visited.has(resolvedPath)) {
+          const nextPath = assetMap[resolvedPath];
+          if (!nextPath || nextPath === resolvedPath) break;
+          visited.add(resolvedPath);
+          resolvedPath = nextPath;
+        }
+        const file = this.app.vault.getFileByPath(resolvedPath);
+        if (!file) { row.createDiv({ cls: "labos-warning", text: "Missing linked asset: " + (link.title ?? resolvedPath) }); continue; }
+        if (link.kind === "image") row.createEl("img", { cls: "labos-paste-preview", attr: { src: this.app.vault.getResourcePath(file), alt: link.title ?? file.name } });
+        const open = row.createEl("button", { text: "Open " + (link.title ?? file.name) });
+        open.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(file));
+      }
+      if (["note", "checkpoint", "measurement"].includes(event.type)) {
+        const edit = row.createEl("button", { text: "Revise" });
+        edit.addEventListener("click", () => { const oldText = String(shown.payload.text ?? ""); const value = window.prompt("Update entry text", oldText); if (value !== null && value !== oldText) void this.act(async () => this.plugin.getBackend().revise(event.id, { text: value })); });
+        if (event.revision_history?.length) { const history = row.createEl("details"); history.createEl("summary", { text: "Revision history · " + String(event.revision_history.length) }); for (const revision of event.revision_history) history.createDiv({ text: revision.timestamp + " · " + JSON.stringify(revision.payload.changes) }); }
+      }
     }
   }
 
@@ -1317,7 +1715,6 @@ export class LabOSView extends ItemView {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       new Notice(message, 8000);
-      await this.refresh();
     }
   }
 }

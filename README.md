@@ -71,10 +71,20 @@ pip install -e '.[dev]'
 pytest
 ```
 
+## Install into an Obsidian vault
+
+From the repository root, run:
+
+```powershell
+python install.py "C:\path\to\your vault"
+```
+
+The installer checks Python 3.11+, Node/npm, and the vault, builds the plugin, stages and verifies a LabOS wheel and plugin bundle, then updates the per-user LabOS virtual environment and `.obsidian/plugins/labos-obsidian`. Re-running it updates the installation while preserving plugin settings, vault notes/attachments, and `~/labos-data`. Reload Obsidian after installation; first-time users must enable LabOS under Community plugins.
+
 ## Current commands
 
 ```text
-labos start PROJECT [--label TEXT] [--cwd PATH]
+labos start PROJECT [--label TEXT] [--cwd PATH] [--setup-json JSON]
 labos note TEXT...
 labos good [TEXT...]
 labos bad [TEXT...]
@@ -84,7 +94,15 @@ labos status
 labos recent [-n N]
 labos recent [-n N] --json
 labos export [PATH]
-labos device add --fingerprint ID --alias NAME [--kind board|scope|psu|daq|detector|other]
+labos setup get|history
+labos setup set --json JSON
+labos capture [TEXT...] [--kind note|measurement] [--at ISO] [--tag TAG]
+labos log YYYY-MM-DD [--session-id ID] [--tag TAG] [--search TEXT] [--offset N] [--limit N]
+labos revise EVENT_ID --changes-json JSON
+labos tag list|set|retag ...
+labos markdown YYYY-MM-DD PATH
+labos sync-log PATH [--apply] [--remove-id EVENT_ID]
+labos device add --fingerprint ID --alias NAME [--kind KIND]
 labos device list
 labos device show TARGET
 labos device edit TARGET [--fingerprint ID] [--alias NAME] [--kind KIND]
@@ -95,7 +113,11 @@ labos device fact approve TARGET --name NAME --value VALUE [--evidence REF ...] 
 labos device fact edit TARGET FACT_ID --name NAME --value VALUE [--evidence REF ...] [--notes TEXT]
 labos device power approve TARGET --name NAME --rails-json JSON [--evidence REF ...] [--notes TEXT]
 labos device power edit TARGET PROFILE_ID --name NAME --rails-json JSON [--evidence REF ...] [--notes TEXT]
+labos sessions
+labos compare LEFT_SESSION_ID RIGHT_SESSION_ID [--json]
 ```
+
+Use `labos sessions` to find session IDs, then compare their recorded Git snapshots, latest explicit setups, resource membership, checkpoints, measurements, and artifact references. Markdown is printed by default; `--json` emits deterministic versioned data. A `same` result means the recorded values match, while `unrecorded` means there is not enough evidence to compare. Historical checkpoint Git snapshots captured in another session are not treated as occurrence-time snapshots. Measurements remain separate evidence entries and are not paired or aggregated; artifact paths and optional hashes are reported without reading files. Differences do not establish cause.
 
 ## Obsidian desktop UI
 
@@ -107,7 +129,7 @@ Terminal ───────┐
 Obsidian panel ─┘
 ```
 
-It provides primary **Today / Devices / Reports** navigation, device-specific operational pages, optional device selection at session start, fast device add/remove/replace transitions, Start/End, quick notes, WORKING/BROKEN checkpoints, vault-file attachments, recent timeline, evidence coverage, setup preflight, and versioned Factual/Reviewed/Rigorous handoffs with live progress and cancellation. Reports are derived outputs; they do not implement a second evidence store.
+It provides **Logs / Setup / Devices / Reports** navigation, a draggable hardware canvas, explicit setup carry-forward, dated notes and measurements, day search and tag filters, revision history, image paste, vault links, and managed daily Markdown logs. Reports remain derived outputs and keep their original Git snapshots.
 
 Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). The professional reporting/reliability contract is documented in [`docs/AI_REPORTS.md`](docs/AI_REPORTS.md). Physical device identity and session resource context are documented in [`docs/DEVICES.md`](docs/DEVICES.md).
 

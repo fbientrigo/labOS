@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .agents import SUPPORTED_PROVIDERS
+from .comparison import build_comparison, render_comparison_markdown
 from .doctor import doctor_text, run_doctor
 from .knowledge import (
     approve_fact,
@@ -25,6 +26,9 @@ from .ledger import (
     recent_events,
     start_session,
 )
+from .logbook import (asset_renames, bulk_retag, capture, current_setup, daily_log_id, effective_entries, list_sessions,
+                      record_asset_rename, revise, save_setup, set_tag, setup_history,
+                      tags_for_day, update_markdown_log, write_daily_markdown)
 from .resources import (
     RESOURCE_KINDS,
     add_resource,
@@ -107,15 +111,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Experiment/repository working directory. Defaults to the current directory.",
     )
+    start.add_argument("--setup-json", help="Explicit setup to use; defaults to an empty setup.")
 
     note = sub.add_parser("note", help="Append a note; works even without a session.")
     note.add_argument("text", nargs="+")
 
     good = sub.add_parser("good", help="Mark a WORKING checkpoint and snapshot Git.")
     good.add_argument("text", nargs="*")
+    good.add_argument("--tag")
+    good.add_argument("--at")
+    good.add_argument("--links-json", default="[]")
+    good.add_argument("--setup-json")
+    good.add_argument("--session-id")
+    good.add_argument("--json", action="store_true", dest="as_json")
 
     bad = sub.add_parser("bad", help="Mark a BROKEN checkpoint and snapshot Git.")
     bad.add_argument("text", nargs="*")
+    bad.add_argument("--tag")
+    bad.add_argument("--at")
+    bad.add_argument("--links-json", default="[]")
+    bad.add_argument("--setup-json")
+    bad.add_argument("--session-id")
+    bad.add_argument("--json", action="store_true", dest="as_json")
 
     attach = sub.add_parser("attach", help="Attach a file by reference or managed copy.")
     attach.add_argument("path", type=Path)
@@ -136,13 +153,79 @@ def build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export", help="Export portable events.jsonl from SQLite.")
     export.add_argument("path", nargs="?", type=Path, help="Defaults to HOME/exports/events.jsonl.")
 
+    setup = sub.add_parser("setup", help="Read or append a complete hardware setup snapshot.")
+    setup_sub = setup.add_subparsers(dest="setup_command", required=True)
+    setup_sub.add_parser("get")
+    setup_sub.add_parser("history")
+    setup_set = setup_sub.add_parser("set")
+    setup_set.add_argument("--json", required=True, dest="setup_json")
+
+    capture_parser = sub.add_parser("capture", help="Capture a dated observation or measurement.")
+    capture_parser.add_argument("text", nargs="*", default=[])
+    capture_parser.add_argument("--kind", choices=["note", "measurement"], default="note")
+    capture_parser.add_argument("--tag")
+    capture_parser.add_argument("--at", dest="occurred_at")
+    capture_parser.add_argument("--target")
+    capture_parser.add_argument("--current", type=float)
+    capture_parser.add_argument("--unit", choices=["A", "mA"])
+    capture_parser.add_argument("--voltage", type=float)
+    capture_parser.add_argument("--links-json", default="[]")
+    capture_parser.add_argument("--setup-json")
+    capture_parser.add_argument("--session-id")
+
+    log = sub.add_parser("log", help="Query effective entries for a local calendar day.")
+    log.add_argument("day")
+    log.add_argument("--session-id")
+    log.add_argument("--tag")
+    log.add_argument("--search")
+    log.add_argument("--offset", type=int, default=0)
+    log.add_argument("--limit", type=int, default=100)
+
+    revision = sub.add_parser("revise", help="Append an entry revision.")
+    revision.add_argument("entry_id")
+    revision.add_argument("--changes-json", required=True)
+
+    sub.add_parser("sessions", help="List sessions for explicit historical log association.")
+
+    tag = sub.add_parser("tag", help="Define or bulk-retag work tags for a day.")
+    tag_sub = tag.add_subparsers(dest="tag_command", required=True)
+    tag_list = tag_sub.add_parser("list")
+    tag_list.add_argument("day")
+    tag_set = tag_sub.add_parser("set")
+    tag_set.add_argument("day")
+    tag_set.add_argument("name")
+    tag_set.add_argument("color")
+    tag_move = tag_sub.add_parser("retag")
+    tag_move.add_argument("day")
+    tag_move.add_argument("old_tag")
+    tag_move.add_argument("new_tag")
+
+    markdown = sub.add_parser("markdown", help="Update a dated Markdown log in a vault.")
+    markdown.add_argument("day")
+    markdown.add_argument("path", type=Path)
+
+    asset = sub.add_parser("asset", help="Record an explicit asset path change.")
+    asset_sub = asset.add_subparsers(dest="asset_command", required=True)
+    renamed = asset_sub.add_parser("rename")
+    renamed.add_argument("old_path")
+    renamed.add_argument("new_path")
+
+    sync_log = sub.add_parser("sync-log", help="Preview or apply Markdown log edits as append-only evidence.")
+    sync_log.add_argument("path", type=Path)
+    sync_log.add_argument("--apply", action="store_true")
+    sync_log.add_argument("--remove-id", action="append", default=[])
+
+    log_id = sub.add_parser("log-id", help="Read the stable identifier for a daily log.")
+    log_id.add_argument("day")
+    sub.add_parser("asset-map", help="Resolve current paths for explicitly renamed assets.")
+
     device = sub.add_parser("device", help="Manage persistent physical devices.")
     device_sub = device.add_subparsers(dest="device_command", required=True)
 
     device_add = device_sub.add_parser("add", help="Register a physical device.")
     device_add.add_argument("--fingerprint", required=True)
     device_add.add_argument("--alias", required=True)
-    device_add.add_argument("--kind", choices=RESOURCE_KINDS, default="other")
+    device_add.add_argument("--kind", default="other")
 
     device_sub.add_parser("list", help="List registered devices.")
 
@@ -153,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     device_edit.add_argument("target", help="Alias, fingerprint, or resource ID.")
     device_edit.add_argument("--fingerprint")
     device_edit.add_argument("--alias")
-    device_edit.add_argument("--kind", choices=RESOURCE_KINDS)
+    device_edit.add_argument("--kind")
 
     device_use = device_sub.add_parser("use", help="Add a device to the active session.")
     device_use.add_argument("target", help="Alias, fingerprint, or resource ID.")
@@ -230,6 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--json", action="store_true", dest="as_json")
     record.add_argument("--output", type=Path)
 
+    compare = sub.add_parser("compare", help="Compare recorded evidence from two sessions.")
+    compare.add_argument("left_session_id", metavar="LEFT_SESSION_ID")
+    compare.add_argument("right_session_id", metavar="RIGHT_SESSION_ID")
+    compare.add_argument("--json", action="store_true", dest="as_json")
+
     doctor = sub.add_parser(
         "doctor",
         help="Check SQLite integrity, session state, paths and local agent CLIs.",
@@ -267,17 +355,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "start":
-            event = start_session(home, args.project, args.label, args.cwd)
+            setup = json.loads(args.setup_json) if args.setup_json else None
+            event = start_session(home, args.project, args.label, args.cwd, setup)
             print(f"STARTED {event['project']}  {event['session_id']}")
         elif args.command == "note":
             event = add_note(home, _text(args.text) or "")
             print(_short_event(event))
         elif args.command == "good":
-            event = checkpoint(home, "working", _text(args.text))
-            print(_short_event(event))
+            event = checkpoint(home, "working", _text(args.text), tag=args.tag, occurred_at=args.at, links=json.loads(args.links_json), setup=json.loads(args.setup_json) if args.setup_json else None, historical_session_id=args.session_id)
+            print(json.dumps(event, ensure_ascii=False) if args.as_json else _short_event(event))
         elif args.command == "bad":
-            event = checkpoint(home, "broken", _text(args.text))
-            print(_short_event(event))
+            event = checkpoint(home, "broken", _text(args.text), tag=args.tag, occurred_at=args.at, links=json.loads(args.links_json), setup=json.loads(args.setup_json) if args.setup_json else None, historical_session_id=args.session_id)
+            print(json.dumps(event, ensure_ascii=False) if args.as_json else _short_event(event))
         elif args.command == "attach":
             event = attach_artifact(
                 home,
@@ -306,6 +395,56 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(_short_event(event))
         elif args.command == "export":
             print(export_events(home, args.path))
+        elif args.command == "setup":
+            if args.setup_command == "get":
+                print(json.dumps(current_setup(home), ensure_ascii=False))
+            elif args.setup_command == "history":
+                print(json.dumps(setup_history(home), ensure_ascii=False))
+            else:
+                value = json.loads(args.setup_json)
+                print(json.dumps(save_setup(home, value), ensure_ascii=False))
+        elif args.command == "capture":
+            try:
+                links = json.loads(args.links_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid --links-json: {exc}") from exc
+            if not isinstance(links, list):
+                raise ValueError("--links-json must be an array")
+            setup_value = json.loads(args.setup_json) if args.setup_json else None
+            if setup_value is not None and not isinstance(setup_value, dict):
+                raise ValueError("--setup-json must be an object")
+            event = capture(home, kind=args.kind, text=_text(args.text) or "", tag=args.tag,
+                            occurred_at=args.occurred_at, target=args.target,
+                            current=args.current, unit=args.unit, voltage=args.voltage, links=links,
+                            setup=setup_value, session_id=args.session_id)
+            print(json.dumps(event, ensure_ascii=False))
+        elif args.command == "log":
+            if args.offset < 0 or args.limit < 1:
+                raise ValueError("offset must be non-negative and limit positive")
+            print(json.dumps(effective_entries(home, day=args.day, session_id=args.session_id,
+                                               tag=args.tag, query=args.search,
+                                               offset=args.offset, limit=args.limit), ensure_ascii=False))
+        elif args.command == "revise":
+            print(json.dumps(revise(home, args.entry_id, json.loads(args.changes_json)), ensure_ascii=False))
+        elif args.command == "sessions":
+            print(json.dumps(list_sessions(home), ensure_ascii=False))
+        elif args.command == "tag":
+            if args.tag_command == "list":
+                print(json.dumps(tags_for_day(home, args.day)))
+            elif args.tag_command == "set":
+                print(json.dumps(set_tag(home, args.day, args.name, args.color), ensure_ascii=False))
+            else:
+                print(json.dumps(bulk_retag(home, day=args.day, old_tag=args.old_tag, new_tag=args.new_tag), ensure_ascii=False))
+        elif args.command == "markdown":
+            print(write_daily_markdown(home, args.day, args.path))
+        elif args.command == "log-id":
+            print(daily_log_id(home, args.day))
+        elif args.command == "asset-map":
+            print(json.dumps(asset_renames(home), ensure_ascii=False))
+        elif args.command == "asset":
+            print(json.dumps(record_asset_rename(home, args.old_path, args.new_path), ensure_ascii=False))
+        elif args.command == "sync-log":
+            print(json.dumps(update_markdown_log(home, args.path, apply=args.apply, remove_ids=set(args.remove_id)), ensure_ascii=False))
         elif args.command == "device":
             if args.device_command == "add":
                 resource = add_resource(
@@ -416,6 +555,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(str(output))
             else:
                 print(render_session_record_markdown(record, digest))
+        elif args.command == "compare":
+            comparison = build_comparison(home, args.left_session_id, args.right_session_id)
+            if args.as_json:
+                print(json.dumps(comparison, sort_keys=True, ensure_ascii=False))
+            else:
+                print(render_comparison_markdown(comparison), end="")
         elif args.command == "doctor":
             result = run_doctor(
                 home,

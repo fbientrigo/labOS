@@ -9,7 +9,7 @@ from typing import Any
 from .ledger import active_session, read_events
 from .resources import resource_context_timeline
 
-SESSION_RECORD_VERSION = 2
+SESSION_RECORD_VERSION = 4
 
 
 def choose_session_id(home: Path, requested: str | None = None) -> str:
@@ -26,11 +26,14 @@ def choose_session_id(home: Path, requested: str | None = None) -> str:
 
 
 def session_events(home: Path, session_id: str) -> list[dict[str, Any]]:
-    events = [
-        event
-        for event in read_events(home)
-        if event.get("session_id") == session_id
-    ]
+    all_events = read_events(home)
+    associated = {event["id"] for event in all_events
+                  if event.get("session_id") == session_id
+                  or event.get("payload", {}).get("historical_session_id") == session_id}
+    events = [event for event in all_events if event.get("session_id") == session_id
+              or event.get("payload", {}).get("historical_session_id") == session_id
+              or (event.get("type") == "entry_revision"
+                  and event.get("payload", {}).get("entry_id") in associated)]
     if not events:
         raise RuntimeError(f"Session not found: {session_id}")
     return events
@@ -190,6 +193,22 @@ def build_session_record(
     }
     coverage = evidence_coverage(events)
     resource_context = resource_context_timeline(events)
+    latest: dict[str, dict[str, Any]] = {}
+    history: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        if event.get("type") == "entry_revision":
+            original_id = event.get("payload", {}).get("entry_id")
+            if original_id:
+                latest.setdefault(original_id, {}).update(event.get("payload", {}).get("changes", {}))
+                history.setdefault(original_id, []).append(event)
+    effective = [
+        {"event_id": event["id"], "timestamp": event["timestamp"],
+         "occurred_at": event.get("payload", {}).get("occurred_at") or event["timestamp"],
+         "type": event["type"], "payload": {**event.get("payload", {}), **latest.get(event["id"], {})},
+         "revision_ids": [revision["id"] for revision in history.get(event["id"], [])]}
+        for event in events if event.get("type") in {"note", "checkpoint", "measurement", "artifact"}
+        and not latest.get(event["id"], {}).get("removed")
+    ]
 
     return {
         "record_version": SESSION_RECORD_VERSION,
@@ -209,6 +228,8 @@ def build_session_record(
         ],
         "coverage": coverage,
         "resource_context": resource_context,
+        "effective_entries": effective,
+        "revision_history": history,
         "git": {
             "start": _git(start),
             "end": _git(end),
@@ -379,6 +400,20 @@ def render_session_record_markdown(
         lines.append(
             f"- **{alias}** · {event['timestamp']} · {_event_detail(event)}"
         )
+
+    lines += ["", "## Effective log entries", ""]
+    visible_entries = [item for item in record.get("effective_entries", []) if not item["payload"].get("removed")]
+    if visible_entries:
+        for item in visible_entries:
+            payload = item["payload"]
+            description = str(payload.get("text") or "").replace("\n", " ")
+            if payload.get("tag"):
+                description = f"[{payload['tag']}] {description}"
+            if item["type"] == "measurement":
+                description = f"{payload.get('target', 'setup')}: {payload.get('current')} {payload.get('unit')} {description}".strip()
+            lines.append(f"- **{item['occurred_at']}** · {item['type']} · {description} · `{item['event_id']}`")
+    else:
+        lines.append("_No log entries recorded._")
 
     lines += ["", "## Artifacts", ""]
     if record["artifacts"]:
