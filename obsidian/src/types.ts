@@ -103,7 +103,18 @@ export interface LabOSSettings {
   codexModel: string;
   claudeModel: string;
   deviceColors: Record<string, string>;
+  notesFolder: string;
+  autoWriteDailyLog: boolean;
+  copyQuickToNote: boolean;
+  indexOnStartup: boolean;
+  indexOnCreate: boolean;
+  indexOnRename: boolean;
+  indexOnDelete: boolean;
+  noteIndex: Record<string, string>;
 }
+
+export interface NoteSyncEntry { id: string; text: string; links: Array<{ title: string; path?: string; kind?: string }>; }
+export interface NoteSyncResult { changed: string[]; unchanged: string[]; unknown: string[]; events: unknown[]; }
 
 export interface SessionState {
   schema_version?: number;
@@ -240,6 +251,7 @@ export interface LabOSBackend {
   syncMarkdown(path: string, apply?: boolean, removeIds?: string[]): Promise<{ status: string; changed: string[]; changed_details?: Array<{ entry_id: string; changes: Record<string, { before: unknown; after: unknown }> }>; new: Array<Record<string, unknown>>; removed: string[]; events: string[]; text_diff?: string }>;
   writeDailyLog(day: string, path: string): Promise<void>;
   dailyLogId(day: string): Promise<string>;
+  syncEntries(entries: NoteSyncEntry[], apply?: boolean): Promise<NoteSyncResult>;
   assetMap(): Promise<Record<string, string>>;
   record(sessionId?: string): Promise<SessionRecordResult>;
   devices(): Promise<DeviceResource[]>;

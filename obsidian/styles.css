@@ -560,3 +560,15 @@
 .labos-setup-port-label { overflow-wrap: anywhere; font-size: var(--font-ui-smaller); }
 .labos-setup-card { width: 160px; }
 .labos-setup-portsupdate { font-size: var(--font-ui-smaller); white-space: normal; }
+
+/* Session Note entries: a native callout, one compact line with a clock. */
+.callout[data-callout="labos"] {
+  --callout-color: var(--interactive-accent-rgb);
+  --callout-icon: lucide-clock;
+  padding: 2px 8px;
+  margin: 12px 0 4px;
+  border-width: 0 0 0 3px;
+  background: transparent;
+}
+.callout[data-callout="labos"] .callout-title { padding: 0; font-size: var(--font-ui-small); color: var(--text-muted); }
+.callout[data-callout="labos"] .callout-content { display: none; }

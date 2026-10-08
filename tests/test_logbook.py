@@ -17,6 +17,7 @@ from labos.logbook import (
     revise,
     save_setup,
     set_tag,
+    sync_entries,
     update_markdown_log,
     write_daily_markdown,
 )
@@ -480,3 +481,57 @@ def test_list_sessions_reports_label_and_start_directory(tmp_path: Path) -> None
     assert item["label"] == "Zynq trigger"
     assert item["cwd"] == str(tmp_path.resolve())
     assert item["ended_at"] is not None
+
+
+def test_sync_entries_revises_only_changed_entries_and_never_creates(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    note = {"title": "261008", "path": "Notes/261008.md", "kind": "note"}
+    first = capture(home, kind="note", text="", links=[note])
+    second = capture(home, kind="note", text="DMA works", links=[note])
+    before = len(read_events(home))
+
+    entries = [
+        {"id": first["id"], "text": "", "links": [note]},
+        {"id": second["id"], "text": "DMA works", "links": [note]},
+        {"id": "does-not-exist", "text": "x", "links": []},
+    ]
+    preview = sync_entries(home, entries)
+    assert preview["unchanged"] == [first["id"], second["id"]]
+    assert preview["unknown"] == ["does-not-exist"]
+    assert len(read_events(home)) == before
+
+    shot = {"title": "scope", "path": "Notes/scope.png", "kind": "image"}
+    entries[0] = {"id": first["id"], "text": "Trigger drops after 70 s", "links": [note, shot]}
+    applied = sync_entries(home, entries, apply=True)
+    assert applied["changed"] == [first["id"]]
+    assert len(read_events(home)) == before + 1
+    again = sync_entries(home, entries, apply=True)
+    assert again["changed"] == [] and len(read_events(home)) == before + 1
+
+    shown = {e["id"]: e["effective_payload"] for e in effective_entries(home, day=_today())}
+    assert shown[first["id"]]["text"] == "Trigger drops after 70 s"
+    assert shown[first["id"]]["links"] == [note, shot]
+    raw = next(e for e in read_events(home) if e["id"] == first["id"])
+    assert raw["payload"]["text"] == ""
+
+
+def test_sync_entries_skips_removed_entries(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="gone")
+    revise(home, entry["id"], {"removed": True})
+    result = sync_entries(home, [{"id": entry["id"], "text": "back", "links": []}], apply=True)
+    assert result["unknown"] == [entry["id"]] and result["events"] == []
+
+
+def _today() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def test_sync_entries_treats_a_moved_note_as_unchanged(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    old = {"title": "261008", "path": "Notes/261008.md", "kind": "note"}
+    entry = capture(home, kind="note", text="DMA works", links=[old])
+    record_asset_rename(home, "Notes/261008.md", "Archive/2026-10/261008.md")
+    moved = {"title": "261008", "path": "Archive/2026-10/261008.md", "kind": "note"}
+    result = sync_entries(home, [{"id": entry["id"], "text": "DMA works", "links": [moved]}], apply=True)
+    assert result["changed"] == [] and result["events"] == []

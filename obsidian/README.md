@@ -23,6 +23,18 @@ The plugin does **not** implement a second evidence store. It executes the exist
 - commands for WORKING / BROKEN;
 - configurable LabOS executable, evidence home, default project/workdir, and timeline length;\n- on-demand AI report generation with configurable worker, validator, and critic;\n- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
 
+## Session notes
+
+Write in your own Markdown note; LabOS adds the structure.
+
+- **Connect this note** (button or command) adds `labos-id` and `labos-sessions` to the note's properties. The id lives in the note, so you can move it to any folder and it stays connected.
+- **New entry** (bind a hotkey under Settings > Hotkeys) inserts a small clock callout such as `~01:10` at the cursor. LabOS writes the time (rounded to 5 minutes); you never type it. Write or paste anything below it, including screenshots.
+- **Sync note** saves what changed under each entry as an append-only revision. Entries are found by a hidden id, not by the visible time.
+- **New session note** creates `YYMMDD.md` in the notes folder (optionally from `LabOS/Templates/session-note.md`) and connects it.
+- Optional: copy quick-box notes into the connected note (Settings > Notes and index).
+
+The menu (☰) holds the daily log (open/write), tags, and **Rebuild note index**. The index is a small id-to-path table; it never scans the vault unless you ask.
+
 ## Requirements
 
 1. Obsidian desktop.

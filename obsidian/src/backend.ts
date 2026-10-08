@@ -17,6 +17,8 @@ import type {
   LabOSBackend,
   LabOSEvent,
   LabOSSettings,
+  NoteSyncEntry,
+  NoteSyncResult,
   ReportProgress,
   ReportResult,
   PowerProfile,
@@ -570,6 +572,19 @@ export class CliLabOSBackend implements LabOSBackend {
 
   async writeDailyLog(day: string, path: string): Promise<void> {
     await this.run("markdown", [day, path]);
+  }
+
+  async syncEntries(entries: NoteSyncEntry[], apply = true): Promise<NoteSyncResult> {
+    // Entries can be large; pass them in a temp file, not argv.
+    const file = join(tmpdir(), "labos-sync-" + randomUUID() + ".json");
+    await writeFile(file, JSON.stringify(entries), "utf-8");
+    try {
+      const args = [file];
+      if (apply) args.push("--apply");
+      return JSON.parse(await this.run("sync-entries", args)) as NoteSyncResult;
+    } finally {
+      await unlink(file).catch(() => undefined);
+    }
   }
 
   async dailyLogId(day: string): Promise<string> {

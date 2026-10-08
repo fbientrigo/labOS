@@ -1,7 +1,8 @@
-import { Editor, FileSystemAdapter, Notice, Plugin, normalizePath } from "obsidian";
+import { Editor, FileSystemAdapter, Notice, Plugin, TFile, normalizePath } from "obsidian";
 
 import { CliLabOSBackend } from "./backend";
 import { LabOSSettingTab } from "./settings";
+import { SessionNotes } from "./notes";
 import type { LabOSBackend, LabOSSettings } from "./types";
 import { LabOSView, VIEW_TYPE_LABOS } from "./view";
 
@@ -21,21 +22,42 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   codexModel: "",
   claudeModel: "",
   deviceColors: {},
+  notesFolder: "LabOS/Notes",
+  autoWriteDailyLog: false,
+  copyQuickToNote: false,
+  indexOnStartup: false,
+  indexOnCreate: true,
+  indexOnRename: true,
+  indexOnDelete: true,
+  noteIndex: {},
 };
 
 export default class LabOSPlugin extends Plugin {
   settings: LabOSSettings = { ...DEFAULT_SETTINGS };
   private pendingLogDays = new Set<string>();
+  notes!: SessionNotes;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.notes = new SessionNotes(this);
 
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (this.settings.indexOnRename) this.notes.onRename(oldPath, file.path);
       void this.getBackend().assetRename(oldPath, file.path).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         new Notice("LabOS could not record renamed asset: " + message, 8000);
       });
     }));
+
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (this.settings.indexOnDelete) this.notes.onDelete(file.path);
+    }));
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => {
+      if (this.settings.indexOnCreate) this.notes.onMetadata(file);
+    }));
+    this.app.workspace.onLayoutReady(() => {
+      if (this.settings.indexOnStartup) void this.notes.rebuild();
+    });
 
     this.registerView(
       VIEW_TYPE_LABOS,
@@ -85,6 +107,48 @@ export default class LabOSPlugin extends Plugin {
       id: "update-log",
       name: "Update log in LabOS",
       callback: () => { void this.updateActiveLog(); },
+    });
+
+    this.addCommand({
+      id: "connect-note",
+      name: "Connect this note to LabOS",
+      callback: () => { void this.guard(() => this.notes.connectActive()); },
+    });
+
+    this.addCommand({
+      id: "new-entry",
+      name: "New entry (time added by LabOS)",
+      editorCallback: (editor: Editor, view) => { void this.guard(() => this.notes.newEntry(editor, view.file)); },
+    });
+
+    this.addCommand({
+      id: "sync-note",
+      name: "Sync this note with LabOS",
+      callback: () => { void this.guard(() => this.notes.sync(this.app.workspace.getActiveFile())); },
+    });
+
+    this.addCommand({
+      id: "new-session-note",
+      name: "New session note",
+      callback: () => { void this.guard(() => this.notes.createSessionNote()); },
+    });
+
+    this.addCommand({
+      id: "open-today-log",
+      name: "Open today's log",
+      callback: () => { void this.guard(() => this.openDailyLog()); },
+    });
+
+    this.addCommand({
+      id: "write-today-log",
+      name: "Write today's log",
+      callback: () => { void this.guard(() => this.writeTodayLog()); },
+    });
+
+    this.addCommand({
+      id: "rebuild-note-index",
+      name: "Rebuild note index",
+      callback: () => { void this.guard(() => this.rebuildIndex()); },
     });
 
     this.addCommand({
@@ -188,6 +252,7 @@ export default class LabOSPlugin extends Plugin {
   }
 
   async writeDailyLogForEvent(event: { timestamp: string; payload: Record<string, unknown> }): Promise<boolean> {
+    if (!this.settings.autoWriteDailyLog) return true; // The log is written on request ("Write today's log").
     const instant = new Date(String(event.payload.occurred_at ?? event.timestamp));
     const day = [instant.getFullYear(), String(instant.getMonth() + 1).padStart(2, "0"), String(instant.getDate()).padStart(2, "0")].join("-");
     try {
@@ -203,17 +268,37 @@ export default class LabOSPlugin extends Plugin {
   async writeDailyLog(day: string): Promise<void> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) return;
+    const backend = this.getBackend();
+    const stableId = await backend.dailyLogId(day);
+    const vaultPath = await this.notes.logPath(stableId, day);
+    await backend.writeDailyLog(day, adapter.getFullPath(normalizePath(vaultPath)));
+    this.notes.remember("log:" + stableId, vaultPath);
+  }
+
+  private today(): string {
+    return new Date().toLocaleDateString("en-CA");
+  }
+
+  async writeTodayLog(): Promise<void> {
+    await this.writeDailyLog(this.today());
+    new Notice("Today's log is up to date.");
+  }
+
+  async openDailyLog(): Promise<void> {
+    const day = this.today();
+    await this.writeDailyLog(day);
     const stableId = await this.getBackend().dailyLogId(day);
-    const marker = new RegExp(`<!--\\s*labos-log-id:${stableId}\\s*-->`, "i");
-    const matches: string[] = [];
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const contents = await this.app.vault.cachedRead(file);
-      if (marker.test(contents)) matches.push(file.path);
-    }
-    if (matches.length > 1) throw new Error(`Multiple vault notes contain the stable ID for ${day}; resolve the duplicate log first.`);
-    const vaultPath = matches[0];
-    const path = adapter.getFullPath(normalizePath(vaultPath ?? "LabOS/Logs/" + day + ".md"));
-    await this.getBackend().writeDailyLog(day, path);
+    const file = this.app.vault.getAbstractFileByPath(await this.notes.logPath(stableId, day));
+    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  async rebuildIndex(): Promise<void> {
+    const count = await this.notes.rebuild();
+    new Notice("LabOS note index rebuilt: " + String(count) + " entries.");
+  }
+
+  private async guard(action: () => Promise<void>): Promise<void> {
+    try { await action(); } catch (error) { this.showError(error); }
   }
 
   async retryDailyLogs(): Promise<void> {

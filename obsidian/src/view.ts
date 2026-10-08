@@ -458,6 +458,10 @@ export class LabOSView extends ItemView {
     });
     menuButton.addEventListener("click", (event) => {
       const menu = new Menu();
+      menu.addItem((item) => item.setTitle("Open today's log").setIcon("book-open").onClick(() => { void this.act(() => this.plugin.openDailyLog()); }));
+      menu.addItem((item) => item.setTitle("Write today's log").setIcon("file-pen").onClick(() => { void this.act(() => this.plugin.writeTodayLog()); }));
+      menu.addItem((item) => item.setTitle("Rebuild note index").setIcon("database").onClick(() => { void this.act(() => this.plugin.rebuildIndex()); }));
+      menu.addSeparator();
       menu.addItem((item) => item.setTitle("Tag colors and retag…").setIcon("tag").onClick(() => { new TagsModal(this.app, this.plugin, this.selectedDay, () => void this.refresh()).open(); }));
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Check setup").setIcon("stethoscope").onClick(() => { void this.runDoctor(menuButton); }));
@@ -551,6 +555,7 @@ export class LabOSView extends ItemView {
     } else {
       this.renderStart(container, devices, setup);
     }
+    this.renderNotes(container, session);
     this.renderDayControls(container, events, tags, colorSuggestions);
     if (!session) {
       const quick = container.createDiv({ cls: "labos-section labos-stack" });
@@ -565,6 +570,29 @@ export class LabOSView extends ItemView {
     this.renderPager(container, events);
   }
 
+  /** One compact row: make or connect a note, sync it, and open the notes of this session. */
+  private renderNotes(container: HTMLElement, session: SessionState | null): void {
+    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const row = section.createDiv({ cls: "labos-actions" });
+    const notes = this.plugin.notes;
+    row.createEl("button", { text: "New session note", attr: { title: "Create today's note in your notes folder and connect it" } })
+      .addEventListener("click", () => { void this.act(() => notes.createSessionNote()); });
+    row.createEl("button", { text: "Connect note", attr: { title: "Connect the open note to this session" } })
+      .addEventListener("click", () => { void this.act(() => notes.connectActive()); });
+    row.createEl("button", { text: "Sync note", attr: { title: "Save edits made in the open note as LabOS revisions" } })
+      .addEventListener("click", () => { void this.act(() => notes.sync(this.app.workspace.getActiveFile())); });
+    const connected = notes.connectedNotes(session?.session_id);
+    if (session && connected.length) {
+      const list = section.createDiv({ cls: "labos-muted" });
+      list.createSpan({ text: "Notes: " });
+      connected.forEach((file, index) => {
+        if (index) list.createSpan({ text: " · " });
+        const link = list.createEl("a", { text: file.basename, attr: { title: file.path } });
+        link.addEventListener("click", () => { void notes.open(file); });
+      });
+    }
+  }
+
   private renderPendingMarkdown(container: HTMLElement): void {
     if (!this.plugin.hasPendingLogUpdates) return;
     const row = container.createDiv({ cls: "labos-warning labos-actions", text: "Evidence is saved; a daily Markdown log update needs retry." });
@@ -572,10 +600,11 @@ export class LabOSView extends ItemView {
     retry.addEventListener("click", () => void this.plugin.retryDailyLogs());
   }
 
-  private async captureWithMarkdown(input: Parameters<LabOSBackend["capture"]>[0]): Promise<void> {
+  private async captureWithMarkdown(input: Parameters<LabOSBackend["capture"]>[0]): Promise<LabOSEvent> {
     const event = await this.plugin.getBackend().capture(input);
     const logUpdated = await this.plugin.writeDailyLogForEvent(event);
     if (!logUpdated) new Notice("Evidence saved; daily Markdown log needs an update. Use Retry log update.", 10000);
+    return event;
   }
 
   private createWorkTagSelector(parent: HTMLElement, tags: Array<{ name: string; color: string }>): HTMLSelectElement {
@@ -1917,7 +1946,8 @@ export class LabOSView extends ItemView {
         ...this.pendingImages,
       ];
       const occurrence = occurredAt || (!this.followsToday ? this.defaultOccurrence(this.selectedDay) : undefined);
-      await this.captureWithMarkdown({ text, tag: tag || undefined, occurredAt: occurrence ? new Date(occurrence).toISOString() : undefined, links, sessionId: sessionId || undefined, setup });
+      const event = await this.captureWithMarkdown({ text, tag: tag || undefined, occurredAt: occurrence ? new Date(occurrence).toISOString() : undefined, links, sessionId: sessionId || undefined, setup });
+      if (!occurrence && !sessionId) await this.plugin.notes.appendQuick(event, text);
       this.pendingImages = [];
       this.clearDraftOf(textarea);
     });

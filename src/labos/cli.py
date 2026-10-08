@@ -29,7 +29,7 @@ from .ledger import (
     recent_events,
     start_session,
 )
-from .logbook import (asset_renames, bulk_retag, capture, current_setup, daily_log_id, effective_entries, list_sessions,
+from .logbook import (asset_renames, bulk_retag, capture, current_setup, daily_log_id, effective_entries, list_sessions, sync_entries,
                       record_asset_rename, revise, save_setup, set_tag, setup_history,
                       tags_for_day, update_markdown_log, write_daily_markdown)
 from .resources import (
@@ -219,6 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
     sync_log.add_argument("path", type=Path)
     sync_log.add_argument("--apply", action="store_true")
     sync_log.add_argument("--remove-id", action="append", default=[])
+
+    sync_entries_cmd = sub.add_parser("sync-entries", help="Fold edits from a connected note into append-only revisions.")
+    sync_entries_cmd.add_argument("json_file", type=Path, help="JSON list of {id, text, links}.")
+    sync_entries_cmd.add_argument("--apply", action="store_true")
 
     log_id = sub.add_parser("log-id", help="Read the stable identifier for a daily log.")
     log_id.add_argument("day")
@@ -464,6 +468,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(asset_renames(home), ensure_ascii=False))
         elif args.command == "asset":
             print(json.dumps(record_asset_rename(home, args.old_path, args.new_path), ensure_ascii=False))
+        elif args.command == "sync-entries":
+            entries = json.loads(args.json_file.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                raise ValueError("entries file must contain a JSON list")
+            print(json.dumps(sync_entries(home, entries, apply=args.apply), ensure_ascii=False))
         elif args.command == "sync-log":
             print(json.dumps(update_markdown_log(home, args.path, apply=args.apply, remove_ids=set(args.remove_id)), ensure_ascii=False))
         elif args.command == "device":

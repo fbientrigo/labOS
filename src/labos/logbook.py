@@ -275,6 +275,48 @@ def revise(home: Path, entry_id: str, changes: dict[str, Any]) -> dict[str, Any]
         home, "entry_revision", {"entry_id": entry_id, "changes": changes}, session=None)
 
 
+def _link_key(links: Any, renames: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+    return [(str(item.get("title", "")), _resolve_asset(str(item.get("path", "")), renames or {}), str(item.get("kind", "")))
+            for item in (links or []) if isinstance(item, dict)]
+
+
+def sync_entries(home: Path, entries: list[dict[str, Any]], *, apply: bool = False) -> dict[str, Any]:
+    """Fold edits made in a connected Markdown note back into evidence as revisions.
+
+    Each entry is {id, text, links}. Only entries whose effective text or links differ get a new
+    ``entry_revision``; unknown or removed ids are reported and never created. Raw events are untouched.
+    """
+    events = read_events(home)
+    originals = {event["id"]: event for event in events if event["type"] in {"note", "checkpoint", "artifact"}}
+    effective: dict[str, dict[str, Any]] = {key: dict(event["payload"]) for key, event in originals.items()}
+    for event in events:
+        if event["type"] == "entry_revision":
+            target = event["payload"].get("entry_id", "")
+            if target in effective:
+                effective[target].update(event["payload"].get("changes", {}))
+    renames = asset_renames(home)  # a moved note is the same note: compare links by their current path
+    result: dict[str, Any] = {"changed": [], "unchanged": [], "unknown": [], "events": []}
+    for entry in entries:
+        entry_id = str(entry.get("id", ""))
+        current = effective.get(entry_id)
+        if current is None or current.get("removed"):
+            result["unknown"].append(entry_id)
+            continue
+        changes: dict[str, Any] = {}
+        text = str(entry.get("text", "")).strip()
+        if text != str(current.get("text", "")).strip():
+            changes["text"] = text
+        if "links" in entry and _link_key(entry["links"], renames) != _link_key(current.get("links"), renames):
+            changes["links"] = entry["links"]
+        if not changes:
+            result["unchanged"].append(entry_id)
+            continue
+        result["changed"].append(entry_id)
+        if apply:
+            result["events"].append(revise(home, entry_id, changes))
+    return result
+
+
 def set_tag(home: Path, day: str, name: str, color: str) -> dict[str, Any]:
     if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
         raise ValueError("tag color must be a six-digit HEX color")
