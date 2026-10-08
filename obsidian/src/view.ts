@@ -3,6 +3,7 @@ import {
   FuzzySuggestModal,
   ItemView,
   Menu,
+  Modal,
   Notice,
   normalizePath,
   TFile,
@@ -13,7 +14,7 @@ import { relative } from "path";
 import { renderDeviceKnowledge } from "./device_knowledge";
 import { parseShorthand, type Shorthand } from "./shorthand";
 import type LabOSPlugin from "./main";
-import { SetupEditor, type SetupPort, portsChanged, refreshPorts, addDevice, connect, deviceId, disconnect, findDevice, moveDevice, removeDevice, replaceDevice, setActivation, setEdgeLabels, setMode, type SetupDoc } from "./setup_draft";
+import { SetupEditor, type SetupPort, portsChanged, refreshPorts, addDevice, connect, deviceId, disconnect, findDevice, moveDevice, removeDevice, replaceDevice, setActivation, setEdgeLabels, setMode, linksOf, bindEdgePort, type SetupConnection, type SetupDoc } from "./setup_draft";
 import type {
   DeviceKind,
   DeviceKnowledge,
@@ -160,6 +161,41 @@ class VaultFilePicker extends FuzzySuggestModal<TFile> {
   }
 }
 
+/** Rare tag chores live here so the day view stays compact. */
+class TagsModal extends Modal {
+  constructor(app: LabOSView["app"], private readonly plugin: LabOSPlugin, private readonly day: string, private readonly done: () => void) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: "Tags · " + this.day });
+    const color = contentEl.createDiv({ cls: "labos-actions" });
+    const name = color.createEl("input", { cls: "labos-input labos-grow", attr: { placeholder: "Tag name", "aria-label": "Tag name" } });
+    const hex = color.createEl("input", { attr: { type: "color", "aria-label": "Tag color" } });
+    hex.value = "#3388cc";
+    const set = color.createEl("button", { text: "Set color" });
+    set.addEventListener("click", () => {
+      if (!name.value.trim()) { new Notice("Enter a tag name."); return; }
+      void this.plugin.getBackend().setTag(this.day, name.value.trim(), hex.value).then(() => { this.done(); this.close(); }, (error: unknown) => new Notice(error instanceof Error ? error.message : String(error), 8000));
+    });
+    contentEl.createEl("h4", { text: "Rename a tag on this day" });
+    const rename = contentEl.createDiv({ cls: "labos-actions" });
+    const from = rename.createEl("input", { cls: "labos-input labos-grow", attr: { placeholder: "Old tag", "aria-label": "Old tag" } });
+    const to = rename.createEl("input", { cls: "labos-input labos-grow", attr: { placeholder: "New tag", "aria-label": "New tag" } });
+    const go = rename.createEl("button", { text: "Retag" });
+    go.addEventListener("click", () => {
+      if (!from.value.trim() || !to.value.trim()) { new Notice("Enter both tag names."); return; }
+      void this.plugin.getBackend().retag(this.day, from.value.trim(), to.value.trim()).then(() => { this.done(); this.close(); }, (error: unknown) => new Notice(error instanceof Error ? error.message : String(error), 8000));
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 class DevicePicker extends FuzzySuggestModal<DeviceResource> {
   constructor(
     app: LabOSView["app"],
@@ -204,6 +240,7 @@ export class LabOSView extends ItemView {
   private dayOffset = 0;
   private setupEditor: SetupEditor | null = null;
   private setupRoot: HTMLElement | null = null;
+  private selectedEdge: SetupConnection | null = null;
   private setupCtx: { active: boolean; devices: DeviceResource[]; latestEventId: string; knownPorts: Map<string, SetupPort[]> } | null = null;
   private currentWorkTag = "";
   private daySession = "";
@@ -416,11 +453,13 @@ export class LabOSView extends ItemView {
 
     const headerActions = header.createDiv({ cls: "labos-actions" });
     const menuButton = headerActions.createEl("button", {
-      text: "⋯",
-      attr: { "aria-label": "LabOS menu", "aria-haspopup": "menu", title: "Check setup, refresh" },
+      text: "☰",
+      attr: { "aria-label": "LabOS menu", "aria-haspopup": "menu", title: "Tags, notes, setup check" },
     });
     menuButton.addEventListener("click", (event) => {
       const menu = new Menu();
+      menu.addItem((item) => item.setTitle("Tag colors and retag…").setIcon("tag").onClick(() => { new TagsModal(this.app, this.plugin, this.selectedDay, () => void this.refresh()).open(); }));
+      menu.addSeparator();
       menu.addItem((item) => item.setTitle("Check setup").setIcon("stethoscope").onClick(() => { void this.runDoctor(menuButton); }));
       menu.addItem((item) => item.setTitle("Refresh").setIcon("refresh-cw").onClick(() => { void this.refresh(); }));
       menu.showAtMouseEvent(event);
@@ -509,9 +548,6 @@ export class LabOSView extends ItemView {
     this.dayTagColors = new Map(tags.map((item) => [item.name, item.color]));
     if (session) {
       this.renderActiveSession(container, session, record, devices, measurementTargets, tags);
-      if (record) {
-        this.renderCoverage(container, record);
-      }
     } else {
       this.renderStart(container, devices, setup);
     }
@@ -595,25 +631,6 @@ export class LabOSView extends ItemView {
     for (const item of this.sessionChoices) session.createEl("option", { value: item.session_id, text: (item.project ?? "Session") + " · " + item.started_at });
     session.value = this.daySession;
     session.addEventListener("change", () => { this.daySession = session.value; this.dayOffset = 0; void this.refresh(); });
-    if (this.dayTag) {
-      const retag = filters.createEl("button", { text: "Bulk retag filtered entries" });
-      retag.addEventListener("click", () => { const next = window.prompt("New tag name", ""); if (next !== null) void this.act(async () => this.plugin.getBackend().retag(this.selectedDay, this.dayTag, next)); });
-    }
-
-    const define = body.createDiv({ cls: "labos-actions" });
-    const tagName = define.createEl("input", { cls: "labos-input labos-grow", attr: { placeholder: "Define tag", "aria-label": "Tag name", list: "labos-tag-names" } });
-    const color = define.createEl("input", { cls: "labos-input labos-grow", attr: { type: "text", placeholder: "#3388cc", title: "Tag color in HEX", "aria-label": "Tag color (HEX)", list: "labos-tag-colors" } });
-    color.value = tagDefinitions[0]?.color ?? "#3388cc";
-    const colorOptions = define.createEl("datalist", { attr: { id: "labos-tag-colors" } });
-    for (const value of Array.from(new Set(colorSuggestions.map((item) => item.color)))) colorOptions.createEl("option", { value });
-    const tagNames = define.createEl("datalist", { attr: { id: "labos-tag-names" } });
-    for (const value of Array.from(new Set(colorSuggestions.map((item) => item.name)))) tagNames.createEl("option", { value });
-    tagName.addEventListener("change", () => {
-      const suggestion = [...colorSuggestions].reverse().find((item) => item.name === tagName.value.trim());
-      if (suggestion) color.value = suggestion.color;
-    });
-    const defineTag = define.createEl("button", { text: "Set tag color" });
-    defineTag.addEventListener("click", () => { if (!tagName.value.trim() || !/^#[0-9a-f]{6}$/i.test(color.value)) { new Notice("Enter a tag name and six-digit HEX color."); return; } void this.act(async () => this.plugin.getBackend().setTag(this.selectedDay, tagName.value.trim(), color.value)); });
   }
 
   private renderPager(container: HTMLElement, entries: LabOSEvent[]): void {
@@ -690,15 +707,23 @@ export class LabOSView extends ItemView {
           this.drawSetup();
         });
       }
-      const ports: Array<{ port_id?: string; label: string }> = item.ports && item.ports.length ? item.ports : [{ label: "(unspecified)" }];
+      const color = this.plugin.settings.deviceColors[id];
+      if (color) card.style.borderLeft = "5px solid " + color;
+      // A device without defined ports gets one unlabeled connection dot, never an invented port name.
+      const ports: Array<{ port_id?: string; label: string }> = item.ports && item.ports.length ? item.ports : [{ label: "" }];
       for (const port of ports) {
         const row = card.createDiv({ cls: "labos-setup-port" });
-        row.createSpan({ cls: "labos-setup-port-label", text: port.label });
-        const handle = row.createEl("button", { cls: "labos-setup-handle", text: "●", attr: { type: "button", title: "Drag to another port to connect" } });
+        if (port.label) row.createSpan({ cls: "labos-setup-port-label", text: port.label });
+        const handle = row.createEl("button", { cls: "labos-setup-handle", text: "●", attr: { type: "button", title: port.label ? "Drag to another port to connect: " + port.label : "Drag to another device to connect" } });
         handle.dataset.resource = id;
         handle.dataset.port = port.port_id ?? "";
         handles.set(handleKey(id, port.port_id), handle);
         handle.addEventListener("pointerdown", (event) => this.startConnectDrag(event, canvas, svg, cards, handles, id, port));
+      }
+      for (const link of linksOf(draft, id)) {
+        const own = link.ownPort ? link.ownPort + " " : "";
+        const far = link.otherPort ? " · " + link.otherPort : "";
+        card.createDiv({ cls: "labos-setup-link", text: own + "→ " + link.otherAlias + far });
       }
       card.addEventListener("click", () => {
         if (this.selectedCardId === id) return;
@@ -729,6 +754,12 @@ export class LabOSView extends ItemView {
       for (const value of ["unknown", "active", "inactive"]) activation.createEl("option", { value, text: value });
       activation.value = String(selected.activation ?? "unknown");
       activation.addEventListener("change", () => { setActivation(draft, selectedId, activation.value); this.drawSetup(); });
+      const colorInput = bar2.createEl("input", { attr: { type: "color", title: "Device color", "aria-label": "Device color" } });
+      colorInput.value = this.plugin.settings.deviceColors[selectedId] ?? "#3388cc";
+      colorInput.addEventListener("change", () => {
+        this.plugin.settings.deviceColors[selectedId] = colorInput.value;
+        void this.plugin.saveData(this.plugin.settings).then(() => this.drawSetup());
+      });
       const mode = bar2.createEl("input", { cls: "labos-input", attr: { placeholder: "Operating mode (optional)" } });
       mode.value = String(selected.mode ?? "");
       mode.addEventListener("change", () => { setMode(draft, selectedId, mode.value); this.drawSetup(); });
@@ -756,26 +787,54 @@ export class LabOSView extends ItemView {
       root.createDiv({ cls: "labos-muted", text: "Click a device to replace it, remove it from this setup, or change its state." });
     }
 
-    const wires = root.createDiv({ cls: "labos-stack" });
+    if (this.selectedEdge && !draft.connections.includes(this.selectedEdge)) this.selectedEdge = null;
+    if (this.selectedEdge) this.renderWireForm(root, draft, this.selectedEdge, ctx.knownPorts);
+    else if (draft.connections.length) root.createDiv({ cls: "labos-muted", text: "Click a wire to name its ports or disconnect it." });
+  }
+
+  private renderWireForm(root: HTMLElement, draft: SetupDoc, edge: SetupConnection, knownPorts: Map<string, SetupPort[]>): void {
     const nameOf = (rid: string): string => String(findDevice(draft, rid)?.alias ?? rid);
-    for (const edge of draft.connections) {
-      const line = wires.createDiv({ cls: "labos-connection" });
-      line.createSpan({ text: nameOf(edge.from) + (edge.from_port ? " · " + String(edge.from_port) : "") + " ↔ " + nameOf(edge.to) + (edge.to_port ? " · " + String(edge.to_port) : "") });
-      if (edge.from_port_id === undefined || edge.to_port_id === undefined) {
-        const label = line.createEl("button", { text: "Label ports" });
-        label.title = "Edit the text labels of unspecified ports";
-        label.addEventListener("click", () => {
-          const form = line.createDiv({ cls: "labos-actions" });
-          const a = form.createEl("input", { cls: "labos-input", attr: { placeholder: "First port" } });
-          const b = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Second port" } });
-          a.value = String(edge.from_port ?? ""); b.value = String(edge.to_port ?? "");
-          a.disabled = edge.from_port_id !== undefined; b.disabled = edge.to_port_id !== undefined;
-          const ok = form.createEl("button", { text: "Set" });
-          ok.addEventListener("click", () => { setEdgeLabels(edge, a.value.trim(), b.value.trim()); this.drawSetup(); });
-        });
+    const form = root.createDiv({ cls: "labos-setup-selectedbar labos-wireform" });
+    form.createEl("strong", { text: nameOf(edge.from) + " ↔ " + nameOf(edge.to) });
+    const inputs: Array<{ side: "from" | "to"; input: HTMLInputElement }> = [];
+    for (const side of ["from", "to"] as const) {
+      const input = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Port on " + nameOf(edge[side]), "aria-label": "Port on " + nameOf(edge[side]) } });
+      input.value = String((side === "from" ? edge.from_port : edge.to_port) ?? "");
+      input.disabled = (side === "from" ? edge.from_port_id : edge.to_port_id) !== undefined;
+      inputs.push({ side, input });
+    }
+    const saveLabel = form.createEl("label");
+    const save = saveLabel.createEl("input", { attr: { type: "checkbox" } });
+    save.checked = true;
+    saveLabel.createSpan({ text: " Save as device ports" });
+    const apply = form.createEl("button", { text: "Apply" });
+    apply.addEventListener("click", () => void this.applyWireNames(draft, edge, inputs, save.checked, knownPorts));
+    const remove = form.createEl("button", { text: "Disconnect" });
+    remove.addEventListener("click", () => { disconnect(draft, edge); this.selectedEdge = null; this.drawSetup(); });
+  }
+
+  private async applyWireNames(
+    draft: SetupDoc, edge: SetupConnection,
+    inputs: Array<{ side: "from" | "to"; input: HTMLInputElement }>, saveToDevices: boolean,
+    knownPorts: Map<string, SetupPort[]>,
+  ): Promise<void> {
+    try {
+      for (const { side, input } of inputs) {
+        const name = input.value.trim();
+        if (!name || input.disabled) continue;
+        if (!saveToDevices) {
+          setEdgeLabels(edge, side === "from" ? name : String(edge.from_port ?? ""), side === "to" ? name : String(edge.to_port ?? ""));
+          continue;
+        }
+        const resourceId = edge[side];
+        const existing = (knownPorts.get(resourceId) ?? []).find((port) => port.label.toLowerCase() === name.toLowerCase());
+        const port = existing ?? await this.plugin.getBackend().addDevicePort(resourceId, { label: name, kind: "other", direction: "unknown" });
+        bindEdgePort(draft, edge, side, port);
       }
-      const disconnectButton = line.createEl("button", { text: "Disconnect" });
-      disconnectButton.addEventListener("click", () => { disconnect(draft, edge); this.drawSetup(); });
+      this.selectedEdge = null;
+      await this.refresh();
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error), 8000);
     }
   }
 
@@ -896,17 +955,40 @@ export class LabOSView extends ItemView {
       const a = anchor(edge.from, edge.from_port_id);
       const b = anchor(edge.to, edge.to_port_id);
       if (!a || !b) continue;
+      const color = this.plugin.settings.deviceColors[edge.from];
+      const coords = { x1: String(a.x), y1: String(a.y), x2: String(b.x), y2: String(b.y) };
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", String(a.x)); line.setAttribute("y1", String(a.y));
-      line.setAttribute("x2", String(b.x)); line.setAttribute("y2", String(b.y));
-      line.setAttribute("class", "labos-setup-wire");
+      for (const [key, value] of Object.entries(coords)) line.setAttribute(key, value);
+      line.setAttribute("class", "labos-setup-wire" + (edge === this.selectedEdge ? " labos-setup-wire-selected" : ""));
+      if (color) line.style.stroke = color;
       svg.appendChild(line);
+      // Wide invisible line: the visible wire is too thin to click.
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      for (const [key, value] of Object.entries(coords)) hit.setAttribute(key, value);
+      hit.setAttribute("class", "labos-setup-wire-hit");
+      hit.addEventListener("click", () => { this.selectedEdge = edge; this.drawSetup(); });
+      svg.appendChild(hit);
     }
   }
 
   private renderStart(container: HTMLElement, devices: DeviceResource[], lastSetup: { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>> }): void {
-    const section = container.createDiv({ cls: "labos-section labos-stack" });
-    section.createEl("h3", { text: "Start work" });
+    const outer = container.createDiv({ cls: "labos-section labos-stack" });
+    outer.createEl("h3", { text: "Start work" });
+    const previous = [...this.sessionChoices].filter((item) => item.project).sort((x, y) => y.started_at.localeCompare(x.started_at))[0];
+    if (previous) {
+      const again = outer.createEl("button", {
+        cls: "mod-cta",
+        text: "Continue: " + String(previous.project) + (previous.label ? " · " + previous.label : ""),
+        attr: { title: "Same project, directory and last recorded setup" },
+      });
+      again.addEventListener("click", () => {
+        void this.act(async () => {
+          await this.plugin.getBackend().start(String(previous.project), previous.label || undefined, previous.cwd || undefined, lastSetup);
+          new Notice("LabOS continued: " + String(previous.project));
+        });
+      });
+    }
+    const section = this.disclosure(outer, "start-new", previous ? "New work…" : "Start options", !previous).createDiv({ cls: "labos-stack" });
 
     const project = section.createEl("input", {
       cls: "labos-input",
@@ -1534,22 +1616,6 @@ export class LabOSView extends ItemView {
       knowledge,
       knowledgeError,
     );
-
-    const working = section.createDiv({ cls: "labos-device-panel" });
-    working.createEl("strong", { text: "LAST KNOWN WORKING" });
-    working.createDiv({ cls: "labos-empty-value", text: "Not indexed yet" });
-    working.createDiv({
-      cls: "labos-muted",
-      text: "LabOS will derive cross-session device state from recorded checkpoints in Phase D.",
-    });
-
-    const latest = section.createDiv({ cls: "labos-device-panel" });
-    latest.createEl("strong", { text: "LATEST STATE" });
-    latest.createDiv({ cls: "labos-empty-value", text: "Not indexed yet" });
-    latest.createDiv({
-      cls: "labos-muted",
-      text: "No physical state is inferred from missing evidence.",
-    });
 
     if (record) {
       this.renderDeviceCurrentEvidence(section, device, record);

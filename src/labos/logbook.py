@@ -57,6 +57,8 @@ def list_sessions(home: Path) -> list[dict[str, Any]]:
         sid = event.get("session_id")
         if event["type"] == "session_start" and sid:
             sessions[sid] = {"session_id": sid, "project": event.get("project"),
+                             "label": (event.get("payload") or {}).get("label"),
+                             "cwd": event.get("cwd"),
                              "started_at": event["timestamp"], "ended_at": None}
         elif event["type"] == "session_end" and sid in sessions:
             sessions[sid]["ended_at"] = event["timestamp"]

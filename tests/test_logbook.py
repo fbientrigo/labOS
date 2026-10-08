@@ -11,6 +11,7 @@ from labos.logbook import (
     capture,
     effective_entries,
     current_setup,
+    list_sessions,
     record_asset_rename,
     render_daily_markdown,
     revise,
@@ -469,3 +470,13 @@ def test_recorded_setup_is_independent_of_later_port_renames(tmp_path: Path) -> 
     assert after == before == setup
     assert after["connections"][0]["from_port"] == "Ethernet"
     validate_setup(after)
+
+def test_list_sessions_reports_label_and_start_directory(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    started = start_session(home, "tgc", label="Zynq trigger", workdir=tmp_path)
+    end_session(home)
+    (item,) = list_sessions(home)
+    assert item["session_id"] == started["session_id"]
+    assert item["label"] == "Zynq trigger"
+    assert item["cwd"] == str(tmp_path.resolve())
+    assert item["ended_at"] is not None

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   SetupEditor, addDevice, removeDevice, moveDevice, connect, disconnect, replaceDevice,
-  refreshPorts, portsChanged, setActivation, toSnapshot, type SetupDoc, type SetupPort,
+  refreshPorts, portsChanged, setActivation, toSnapshot, linksOf, bindEdgePort, type SetupDoc, type SetupPort,
 } from "./setup_draft";
 
 const dev = (id: string, alias = id) => ({ resource_id: id, fingerprint: "fp-" + id, alias, kind: "board" });
@@ -156,4 +156,29 @@ test("rebase only when clean; stale detection only when dirty", () => {
   assert.equal(ed.rebase({ devices: [dev("z")], connections: [] }, "evt_other"), true);
   assert.equal(ed.baseEventId, "evt_other");
   assert.equal(ed.draft.devices.length, 1);
+});
+
+test("linksOf reports the other device from either side, with real port labels only", () => {
+  const d: SetupDoc = { devices: [], connections: [] };
+  addDevice(d, dev("a", "Zynq #2")); addDevice(d, dev("b", "PSU #4"));
+  const result = connect(d, { resource_id: "a", label: "" }, { resource_id: "b", label: "OUT1" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(linksOf(d, "a").map((l) => [l.otherAlias, l.ownPort, l.otherPort]), [["PSU #4", "", "OUT1"]]);
+  assert.deepEqual(linksOf(d, "b").map((l) => [l.otherAlias, l.ownPort, l.otherPort]), [["Zynq #2", "OUT1", ""]]);
+  assert.deepEqual(linksOf(d, "missing"), []);
+});
+
+test("bindEdgePort adds the port to the snapshot and ties the edge to its id", () => {
+  const d: SetupDoc = { devices: [], connections: [] };
+  addDevice(d, dev("a")); addDevice(d, dev("b"));
+  const result = connect(d, { resource_id: "a", label: "" }, { resource_id: "b", label: "" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  bindEdgePort(d, result.edge, "from", eth("p1", "JTAG"));
+  assert.equal(result.edge.from_port_id, "p1");
+  assert.equal(result.edge.from_port, "JTAG");
+  assert.equal(result.edge.to_port_id, undefined);
+  assert.deepEqual(d.devices[0]!.ports!.map((p) => p.port_id), ["p1"]);
+  bindEdgePort(d, result.edge, "from", eth("p1", "JTAG"));
+  assert.equal(d.devices[0]!.ports!.length, 1);
 });

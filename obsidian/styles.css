@@ -494,6 +494,9 @@
 }
 .labos-setup-wires { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 .labos-setup-wire { stroke: var(--interactive-accent); stroke-width: 2.5; }
+.labos-setup-wire-selected, .labos-setup-wire:hover { stroke-width: 4; }
+.labos-setup-wire-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.labos-setup-link { font-size: var(--font-ui-smaller); color: var(--text-muted); overflow-wrap: anywhere; }
 .labos-setup-wire-preview { stroke: var(--text-muted); stroke-width: 2; stroke-dasharray: 5 4; }
 .labos-setup-card { z-index: 1; }
 .labos-setup-selected { outline: 2px solid var(--interactive-accent); }

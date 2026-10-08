@@ -216,6 +216,46 @@ export function setEdgeLabels(edge: SetupConnection, fromPort: string, toPort: s
   if (edge.to_port_id === undefined) edge.to_port = toPort;
 }
 
+export interface DeviceLink {
+  edge: SetupConnection;
+  otherId: string;
+  otherAlias: string;
+  ownPort: string;
+  otherPort: string;
+}
+
+/** Every connection touching a device, seen from that device. Used to show real facts on a card. */
+export function linksOf(draft: SetupDoc, id: string): DeviceLink[] {
+  const links: DeviceLink[] = [];
+  for (const edge of draft.connections) {
+    const own = edge.from === id ? "from" : edge.to === id ? "to" : null;
+    if (!own) continue;
+    const otherId = own === "from" ? edge.to : edge.from;
+    const other = findDevice(draft, otherId);
+    links.push({
+      edge, otherId,
+      otherAlias: String(other?.alias ?? otherId),
+      ownPort: String((own === "from" ? edge.from_port : edge.to_port) ?? ""),
+      otherPort: String((own === "from" ? edge.to_port : edge.from_port) ?? ""),
+    });
+  }
+  return links;
+}
+
+/**
+ * Point one end of an edge at a real, registered port. The port is added to the device snapshot
+ * when missing, so the edge never refers to an id the snapshot does not describe.
+ */
+export function bindEdgePort(draft: SetupDoc, edge: SetupConnection, side: "from" | "to", port: SetupPort): void {
+  const device = findDevice(draft, edge[side]);
+  if (!device) return;
+  const snapshot = descriptor(port);
+  const ports = device.ports ?? [];
+  if (!ports.some((candidate) => candidate.port_id === snapshot.port_id)) device.ports = [...ports, snapshot];
+  if (side === "from") { edge.from_port_id = snapshot.port_id; edge.from_port = snapshot.label; }
+  else { edge.to_port_id = snapshot.port_id; edge.to_port = snapshot.label; }
+}
+
 /** True when the device's snapshot ports differ from the current device definition. */
 export function portsChanged(device: SetupDevice, current: SetupPort[]): boolean {
   const strip = (ports: SetupPort[]) => ports.map(descriptor);

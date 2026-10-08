@@ -12,7 +12,7 @@ export type ReportStatus =
 export type DeviceKind = string;
 export interface SetupSnapshot { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>>; }
 export interface SetupHistoryItem { event_id: string; timestamp: string; session_id: string | null; setup: SetupSnapshot; }
-export interface SessionChoice { session_id: string; project: string | null; started_at: string; ended_at: string | null; }
+export interface SessionChoice { session_id: string; project: string | null; label?: string | null; cwd?: string | null; started_at: string; ended_at: string | null; }
 
 export interface DeviceResource {
   resource_id: string;
@@ -102,6 +102,7 @@ export interface LabOSSettings {
   agyModel: string;
   codexModel: string;
   claudeModel: string;
+  deviceColors: Record<string, string>;
 }
 
 export interface SessionState {

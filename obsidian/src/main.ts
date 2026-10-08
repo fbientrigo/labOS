@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   agyModel: "",
   codexModel: "",
   claudeModel: "",
+  deviceColors: {},
 };
 
 export default class LabOSPlugin extends Plugin {
