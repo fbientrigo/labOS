@@ -372,3 +372,100 @@ def test_historical_checkpoint_does_not_join_the_save_time_session(tmp_path: Pat
     assert entry["payload"]["setup"] is None
     assert any(item["event_id"] == entry["id"] for item in build_session_record(home, historical["session_id"])["effective_entries"])
     assert not any(item["event_id"] == entry["id"] for item in build_session_record(home, current["session_id"])["effective_entries"])
+
+
+def test_save_setup_rejects_stale_base_event_without_appending(tmp_path: Path) -> None:
+    from labos.logbook import setup_history
+    home = tmp_path / "home"
+    start_session(home, "bench")
+    first = {"devices": [_device("a", "A")], "connections": []}
+    second = {"devices": [_device("a", "A"), _device("b", "B")], "connections": []}
+    save_setup(home, first, base_event_id=setup_history(home)[-1]["event_id"])  # start_session wrote the first snapshot
+    base = setup_history(home)[-1]["event_id"]
+    before = len(read_events(home))
+    with pytest.raises(RuntimeError, match="changed since"):
+        save_setup(home, second, base_event_id="evt_stale")
+    with pytest.raises(RuntimeError, match="changed since"):
+        save_setup(home, second, base_event_id="")  # "" only valid before any snapshot
+    assert len(read_events(home)) == before
+    save_setup(home, second, base_event_id=base)
+    assert current_setup(home) == second
+    assert len(read_events(home)) > before
+    save_setup(home, first)  # no base: legacy behavior
+    assert current_setup(home) == first
+
+
+def _ported(rid: str, alias: str, ports: list[tuple[str, str]]) -> dict:
+    device = _device(rid, alias)
+    device["ports"] = [{"port_id": pid, "label": label, "kind": "network", "direction": "bidirectional"}
+                       for pid, label in ports]
+    return device
+
+
+def _edge(a: str, ap: str, al: str, b: str, bp: str, bl: str) -> dict:
+    return {"id": "conn_1", "from": a, "from_port_id": ap, "from_port": al,
+            "to": b, "to_port_id": bp, "to_port": bl}
+
+
+def test_port_based_setup_validation(tmp_path: Path) -> None:
+    from labos.logbook import validate_setup
+
+    z = _ported("z", "Zynq", [("p1", "Ethernet"), ("p2", "UART TX"), ("p3", "UART RX")])
+    lap = _ported("l", "Laptop", [("q1", "Ethernet")])
+    good = {"setup_schema": 2, "devices": [z, lap],
+            "connections": [_edge("z", "p1", "Ethernet", "l", "q1", "Ethernet"),
+                            _edge("z", "p2", "UART TX", "z", "p3", "UART RX")]}  # loopback on one device
+    validate_setup(good)
+
+    def bad(**changes):
+        setup = {"devices": [z, lap], "connections": [_edge("z", "p1", "Ethernet", "l", "q1", "Ethernet")]}
+        setup.update(changes)
+        return setup
+
+    for connection, message in [
+        (_edge("z", "nope", "Ethernet", "l", "q1", "Ethernet"), "port_id"),
+        (_edge("z", "p1", "Renamed", "l", "q1", "Ethernet"), "match"),
+        (_edge("z", "p1", "Ethernet", "z", "p1", "Ethernet"), "itself"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            validate_setup(bad(connections=[connection]))
+    with pytest.raises(ValueError, match="unique"):
+        validate_setup(bad(devices=[_ported("z", "Zynq", [("p1", "A"), ("p1", "B")]), lap]))
+    with pytest.raises(ValueError, match="unique"):
+        validate_setup(bad(devices=[_ported("z", "Zynq", [("p1", "eth"), ("p2", "ETH")]), lap], connections=[]))
+    with pytest.raises(ValueError, match="setup_schema"):
+        validate_setup(bad(setup_schema="2"))
+    # legacy shape stays valid
+    validate_setup({"devices": [_device("a", "A"), _device("b", "B")],
+                    "connections": [{"from": "a", "to": "b", "from_port": "J1", "to_port": "P2"}]})
+
+
+def test_recorded_setup_is_independent_of_later_port_renames(tmp_path: Path) -> None:
+    from labos.knowledge import add_port, edit_port
+    from labos.logbook import setup_history, validate_setup
+    from labos.resources import add_resource
+
+    home = tmp_path / "home"
+    a = add_resource(home, fingerprint="fp-a", alias="Zynq", kind="board")
+    b = add_resource(home, fingerprint="fp-b", alias="Laptop", kind="other")
+    port_a = add_port(home, "Zynq", label="Ethernet", kind="network", direction="bidirectional")
+    port_b = add_port(home, "Laptop", label="Ethernet", kind="network", direction="bidirectional")
+
+    def instance(resource: dict, port: dict) -> dict:
+        return {"resource_id": resource["resource_id"], "fingerprint": resource["fingerprint"],
+                "alias": resource["alias"], "kind": resource["kind"], "activation": "unknown",
+                "ports": [{key: port[key] for key in ("port_id", "label", "kind", "direction")}]}
+
+    setup = {"setup_schema": 2,
+             "devices": [instance(a, port_a), instance(b, port_b)],
+             "connections": [_edge(a["resource_id"], port_a["port_id"], "Ethernet",
+                                   b["resource_id"], port_b["port_id"], "Ethernet")]}
+    start_session(home, "bench", setup=setup)
+    before = setup_history(home)[-1]["setup"]
+
+    edit_port(home, "Zynq", port_a["port_id"], label="ETH0", kind="network", direction="bidirectional")
+
+    after = setup_history(home)[-1]["setup"]
+    assert after == before == setup
+    assert after["connections"][0]["from_port"] == "Ethernet"
+    validate_setup(after)

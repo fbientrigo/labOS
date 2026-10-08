@@ -10,6 +10,8 @@ import type {
   CheckpointState,
   DeviceKind,
   DeviceKnowledge,
+  DevicePort,
+  DevicePortInput,
   DeviceResource,
   DoctorResult,
   LabOSBackend,
@@ -291,6 +293,25 @@ export class CliLabOSBackend implements LabOSBackend {
     return JSON.parse(await this.run("device", args)) as ApprovedFact;
   }
 
+  private portArgs(input: DevicePortInput): string[] {
+    const args = ["--label", input.label, "--kind", input.kind, "--direction", input.direction];
+    if (input.connector) args.push("--connector", input.connector);
+    if (input.notes) args.push("--notes", input.notes);
+    return args;
+  }
+
+  async addDevicePort(target: string, input: DevicePortInput): Promise<DevicePort> {
+    return JSON.parse(await this.run("device", ["port", "add", target, ...this.portArgs(input)])) as DevicePort;
+  }
+
+  async editDevicePort(target: string, portId: string, input: DevicePortInput): Promise<DevicePort> {
+    return JSON.parse(await this.run("device", ["port", "edit", target, portId, ...this.portArgs(input)])) as DevicePort;
+  }
+
+  async removeDevicePort(target: string, portId: string): Promise<void> {
+    await this.run("device", ["port", "remove", target, portId]);
+  }
+
   async approvePowerProfile(
     target: string,
     input: {
@@ -483,8 +504,10 @@ export class CliLabOSBackend implements LabOSBackend {
     return JSON.parse(await this.run("setup", ["get"])) as SetupSnapshot;
   }
 
-  async saveSetup(value: SetupSnapshot): Promise<void> {
-    await this.run("setup", ["set", "--json", JSON.stringify(value)]);
+  async saveSetup(value: SetupSnapshot, baseEventId?: string): Promise<void> {
+    const args = ["set", "--json", JSON.stringify(value)];
+    if (baseEventId !== undefined) args.push("--base-event-id", baseEventId);
+    await this.run("setup", args);
   }
 
   async capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent> {

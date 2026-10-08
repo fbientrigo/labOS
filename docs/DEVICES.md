@@ -186,3 +186,28 @@ Phase C still does not derive cross-session Last Known Working/Broken, infer phy
 Datasheet/PDF AI search is deferred to GitHub issue #4.
 
 > **LabOS only knows physical state that was explicitly recorded or approved. Absence of a recorded change is not proof that a physical setting remained unchanged.**
+
+
+## Hardware setup editing and ports
+
+**Draft, then commit.** The Obsidian Setup page edits a local draft (move cards, add or remove devices, connect or disconnect ports). Nothing is recorded until **Commit setup**, which appends exactly one `setup_snapshot` event. **Discard changes** restores the last recorded setup. The draft lives in memory only; closing the view loses it. Commit needs an active session; the draft can be prepared without one. Commit passes the id of the snapshot the draft started from (`labos setup set --json JSON --base-event-id ID`); if the recorded setup changed meanwhile, the commit is refused and nothing is appended.
+
+"Remove from setup" only removes the card from the draft. It never deletes the registered device.
+
+**Ports belong to the device.** `device_knowledge.json` entries gain `ports` (still `knowledge_version` 1; a file without `ports` reads as none):
+
+```json
+{"port_id": "port_ab12cd34ef56", "label": "Ethernet", "kind": "network",
+ "direction": "bidirectional", "connector": "RJ45", "notes": null, "approved_at": "..."}
+```
+
+`kind`: power, network, digital, analog, serial, debug, rf, other. `direction`: input, output, bidirectional, unknown. `port_id` never changes; `label` is unique per device (case-insensitive) and may be renamed. Manage ports on the Devices page or with `labos device port add|edit|remove`. Voltage, impedance and signal rules are intentionally not modelled; use `notes`.
+
+**Setups record their own copy.** A setup snapshot device may carry `ports` (id, label, kind, direction, connector at record time). Connections stay flat and keep the legacy fields:
+
+```json
+{"id": "conn_...", "from": "res_a", "from_port": "Ethernet", "from_port_id": "port_ab12",
+ "to": "res_b", "to_port": "Ethernet", "to_port_id": "port_cd34"}
+```
+
+`from`/`to` record drag order only; they do not mean signal direction. If `*_port_id` is present it must exist in that device's snapshot `ports` and the label must match. Renaming or deleting a port in device knowledge never changes an already recorded snapshot. In the editor a card shows "Device ports changed · Update" when the device definition differs; Update is an explicit draft edit. Snapshots written by the new editor carry `"setup_schema": 2`; snapshots without it (and connections without port ids) remain valid and readable.

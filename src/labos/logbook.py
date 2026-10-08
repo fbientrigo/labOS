@@ -71,13 +71,43 @@ def validate_setup(setup: dict[str, Any]) -> None:
     if len(ids) != len(devices) or any(not value for value in ids) or len(ids) != len(set(ids)):
         raise ValueError("every setup device needs a unique resource_id or id")
     id_set = set(ids)
+    schema = setup.get("setup_schema")
+    if schema is not None and (type(schema) is not int or schema < 1):
+        raise ValueError("setup_schema must be a positive integer")
+    # Port descriptors are optional (legacy snapshots have none). When present they are the
+    # snapshot's own copy of the device ports, so connections never depend on current device knowledge.
+    port_labels: dict[str, dict[str, str]] = {}
+    for rid, device in zip(ids, devices):
+        raw_ports = device.get("ports", [])
+        if not isinstance(raw_ports, list):
+            raise ValueError("device ports must be a list")
+        labels: dict[str, str] = {}
+        seen_labels: set[str] = set()
+        for port in raw_ports:
+            if not isinstance(port, dict) or not all(isinstance(port.get(key), str) and port[key].strip() for key in ("port_id", "label")):
+                raise ValueError("every device port needs a port_id and label")
+            if port["port_id"] in labels or port["label"].strip().casefold() in seen_labels:
+                raise ValueError("device port ids and labels must be unique")
+            labels[port["port_id"]] = port["label"]
+            seen_labels.add(port["label"].strip().casefold())
+        port_labels[rid] = labels
     for connection in setup.get("connections", []):
         if not isinstance(connection, dict) or str(connection.get("from", "")) not in id_set or str(connection.get("to", "")) not in id_set:
             raise ValueError("every connection endpoint must refer to a setup device")
-        if connection.get("from") == connection.get("to"):
-            raise ValueError("a device cannot connect to itself")
         if any(not isinstance(connection.get(key, ""), str) for key in ("from_port", "to_port")):
             raise ValueError("connection endpoint labels must be text")
+        port_ids = {side: connection.get(side + "_port_id") for side in ("from", "to")}
+        for side, port_id in port_ids.items():
+            if port_id is None:
+                continue
+            labels = port_labels[str(connection[side])]
+            if not isinstance(port_id, str) or port_id not in labels:
+                raise ValueError("connection port_id must refer to a port of that setup device")
+            if connection.get(side + "_port", labels[port_id]) != labels[port_id]:
+                raise ValueError("connection port label must match the snapshot port descriptor")
+        if connection.get("from") == connection.get("to"):
+            if port_ids["from"] is None or port_ids["to"] is None or port_ids["from"] == port_ids["to"]:
+                raise ValueError("a device cannot connect to itself")
     for device in devices:
         if not all(isinstance(device.get(field), str) and device[field].strip() for field in ("fingerprint", "alias", "kind")):
             raise ValueError("setup devices require identity fingerprint, alias, and kind")
@@ -89,7 +119,12 @@ def validate_setup(setup: dict[str, Any]) -> None:
                 raise ValueError("device layout coordinates must be finite numbers")
 
 
-def save_setup(home: Path, setup: dict[str, Any]) -> dict[str, Any]:
+def save_setup(home: Path, setup: dict[str, Any], base_event_id: str | None = None) -> dict[str, Any]:
+    """Append one complete setup snapshot.
+
+    base_event_id guards against committing a draft built on a superseded setup: it must equal the
+    latest setup_snapshot event id ("" means no snapshot exists yet). None skips the check.
+    """
     validate_setup(setup)
     devices = setup["devices"]
     session = _active_session_db
@@ -97,6 +132,11 @@ def save_setup(home: Path, setup: dict[str, Any]) -> dict[str, Any]:
         active = session(db)
         if active is None:
             raise RuntimeError("Setup changes require an active session.")
+        if base_event_id is not None:
+            row = db.execute("SELECT id FROM events WHERE type='setup_snapshot' ORDER BY sequence DESC LIMIT 1").fetchone()
+            latest = row["id"] if row else ""
+            if latest != base_event_id:
+                raise RuntimeError("The recorded setup changed since this draft was started. Discard the draft and retry.")
         current_resources: dict[str, dict[str, Any]] = {}
         for item in db.execute("SELECT type,payload_json,session_id FROM events WHERE session_id=? ORDER BY sequence", (active["session_id"],)):
             kind = item["type"]

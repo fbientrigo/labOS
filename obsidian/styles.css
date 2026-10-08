@@ -186,7 +186,75 @@
 }
 
 .labos-section {
-  margin-top: var(--size-4-4);
+  margin-top: var(--size-4-3);
+}
+
+.labos-grow {
+  flex: 1 1 120px;
+  width: auto;
+}
+
+.labos-session-head,
+.labos-composer-row {
+  display: flex;
+  gap: var(--size-4-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.labos-session-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.labos-session-head h3 {
+  margin: 0;
+}
+
+.labos-composer-hint:empty {
+  display: none;
+}
+
+.labos-composer-row .labos-select {
+  flex: 1 1 120px;
+  width: auto;
+}
+
+.labos-more {
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: var(--size-4-2);
+}
+
+.labos-more > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  min-height: 28px;
+}
+
+.labos-more > summary:hover {
+  color: var(--text-normal);
+}
+
+.labos-more > summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.labos-more[open] > summary {
+  margin-bottom: var(--size-4-2);
+}
+
+.labos-measure-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  gap: var(--size-4-2);
+}
+
+@media (max-width: 360px) {
+  .labos-measure-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .labos-input,
@@ -210,7 +278,7 @@
 
 .labos-nav {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: var(--size-4-1);
   margin-top: var(--size-4-3);
   padding: 3px;
@@ -480,3 +548,12 @@
 .labos-power-rail-form button {
   grid-column: 1 / -1;
 }
+
+.labos-setup-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.labos-setup-commitbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.labos-setup-dirty { color: var(--text-warning); font-weight: var(--font-semibold); }
+.labos-setup-selectedbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.labos-setup-port { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.labos-setup-port-label { overflow-wrap: anywhere; font-size: var(--font-ui-smaller); }
+.labos-setup-card { width: 160px; }
+.labos-setup-portsupdate { font-size: var(--font-ui-smaller); white-space: normal; }

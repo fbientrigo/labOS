@@ -377,3 +377,68 @@ def test_cross_process_approved_writes_are_serialized(tmp_path: Path) -> None:
     facts = device_knowledge(home, device["resource_id"])["approved_facts"]
     assert len(facts) == 10
     assert len({fact["name"] for fact in facts}) == 10
+
+
+def test_port_crud_keeps_stable_id_and_other_knowledge(tmp_path: Path) -> None:
+    from labos.knowledge import add_port, edit_port, remove_port
+
+    home = tmp_path / "labos"
+    _device(home)
+    fact = approve_fact(home, "Zynq #2", name="Vendor", value="Acme")
+    eth = add_port(home, "Zynq #2", label="Ethernet", kind="network",
+                   direction="bidirectional", connector="RJ45")
+    assert eth["port_id"].startswith("port_")
+    assert eth["notes"] is None
+    with pytest.raises(ValueError, match="already exists"):
+        add_port(home, "Zynq #2", label="ETHERNET")
+    renamed = edit_port(home, "Zynq #2", eth["port_id"], label="ETH0", kind="network",
+                        direction="bidirectional", connector="RJ45", notes="1G")
+    assert renamed["port_id"] == eth["port_id"]
+    knowledge = device_knowledge(home, "Zynq #2")
+    assert [p["label"] for p in knowledge["ports"]] == ["ETH0"]
+    assert knowledge["approved_facts"][0]["fact_id"] == fact["fact_id"]
+    with pytest.raises(RuntimeError, match="not found"):
+        edit_port(home, "Zynq #2", "port_missing", label="X", kind="other", direction="unknown")
+    remove_port(home, "Zynq #2", eth["port_id"])
+    assert device_knowledge(home, "Zynq #2")["ports"] == []
+    with pytest.raises(RuntimeError, match="not found"):
+        remove_port(home, "Zynq #2", eth["port_id"])
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"label": "  "}, {"label": "x", "kind": "plasma"}, {"label": "x", "direction": "sideways"},
+])
+def test_port_validation(tmp_path: Path, kwargs: dict) -> None:
+    from labos.knowledge import add_port
+
+    home = tmp_path / "labos"
+    _device(home)
+    with pytest.raises(ValueError):
+        add_port(home, "Zynq #2", **kwargs)
+    assert device_knowledge(home, "Zynq #2")["ports"] == []
+
+
+def test_knowledge_file_without_ports_still_loads(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    device = _device(home)
+    (home / "device_knowledge.json").write_text(
+        json.dumps({"knowledge_version": 1, "resources": {
+            device["resource_id"]: {"approved_facts": [], "power_profiles": []}}}),
+        encoding="utf-8",
+    )
+    assert device_knowledge(home, "Zynq #2")["ports"] == []
+
+
+def test_port_cli_round_trip(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    _device(home)
+    base = [sys.executable, "-m", "labos.cli", "--home", str(home), "device", "port"]
+
+    def run(*args: str) -> dict:
+        done = subprocess.run([*base, *args], capture_output=True, text=True, check=True)
+        return json.loads(done.stdout)
+
+    added = run("add", "Zynq #2", "--label", "JTAG", "--kind", "debug", "--direction", "bidirectional")
+    assert run("edit", "Zynq #2", added["port_id"], "--label", "JTAG0", "--kind", "debug",
+               "--direction", "bidirectional")["label"] == "JTAG0"
+    assert run("remove", "Zynq #2", added["port_id"])["port_id"] == added["port_id"]

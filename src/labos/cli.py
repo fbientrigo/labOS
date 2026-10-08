@@ -9,11 +9,14 @@ from .agents import SUPPORTED_PROVIDERS
 from .comparison import build_comparison, render_comparison_markdown
 from .doctor import doctor_text, run_doctor
 from .knowledge import (
+    add_port,
     approve_fact,
     approve_power_profile,
     device_knowledge,
     edit_fact,
+    edit_port,
     edit_power_profile,
+    remove_port,
 )
 from .ledger import (
     active_session,
@@ -159,6 +162,8 @@ def build_parser() -> argparse.ArgumentParser:
     setup_sub.add_parser("history")
     setup_set = setup_sub.add_parser("set")
     setup_set.add_argument("--json", required=True, dest="setup_json")
+    setup_set.add_argument("--base-event-id", default=None,
+                           help="Refuse unless this is the latest setup snapshot id (empty string: none yet).")
 
     capture_parser = sub.add_parser("capture", help="Capture a dated observation or measurement.")
     capture_parser.add_argument("text", nargs="*", default=[])
@@ -305,6 +310,22 @@ def build_parser() -> argparse.ArgumentParser:
     power_edit.add_argument("--evidence", action="append", default=[])
     power_edit.add_argument("--notes")
 
+    device_port = device_sub.add_parser("port", help="Manage device interface/port definitions.")
+    device_port_sub = device_port.add_subparsers(dest="port_command", required=True)
+    for port_name, port_help in (("add", "Define a port."), ("edit", "Edit a port definition.")):
+        port_parser = device_port_sub.add_parser(port_name, help=port_help)
+        port_parser.add_argument("target", help="Alias, fingerprint, or resource ID.")
+        if port_name == "edit":
+            port_parser.add_argument("port_id")
+        port_parser.add_argument("--label", required=True)
+        port_parser.add_argument("--kind", default="other")
+        port_parser.add_argument("--direction", default="unknown")
+        port_parser.add_argument("--connector")
+        port_parser.add_argument("--notes")
+    port_remove = device_port_sub.add_parser("remove", help="Forget a port definition.")
+    port_remove.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    port_remove.add_argument("port_id")
+
     record = sub.add_parser(
         "record",
         help="Build the deterministic Session Record for active/latest work.",
@@ -402,7 +423,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps(setup_history(home), ensure_ascii=False))
             else:
                 value = json.loads(args.setup_json)
-                print(json.dumps(save_setup(home, value), ensure_ascii=False))
+                print(json.dumps(save_setup(home, value, args.base_event_id), ensure_ascii=False))
         elif args.command == "capture":
             try:
                 links = json.loads(args.links_json)
@@ -507,6 +528,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     parser.error(f"unknown fact command: {args.fact_command}")
+                print(json.dumps(result, sort_keys=True))
+            elif args.device_command == "port":
+                if args.port_command == "add":
+                    result = add_port(home, args.target, label=args.label, kind=args.kind,
+                                      direction=args.direction, connector=args.connector, notes=args.notes)
+                elif args.port_command == "edit":
+                    result = edit_port(home, args.target, args.port_id, label=args.label, kind=args.kind,
+                                       direction=args.direction, connector=args.connector, notes=args.notes)
+                else:
+                    result = remove_port(home, args.target, args.port_id)
                 print(json.dumps(result, sort_keys=True))
             elif args.device_command == "power":
                 rails = _rails_json(args.rails_json)

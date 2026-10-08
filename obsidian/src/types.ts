@@ -51,11 +51,33 @@ export interface PowerProfile {
   notes?: string | null;
 }
 
+export const PORT_KINDS = ["power", "network", "digital", "analog", "serial", "debug", "rf", "other"] as const;
+export const PORT_DIRECTIONS = ["input", "output", "bidirectional", "unknown"] as const;
+
+export interface DevicePort {
+  port_id: string;
+  label: string;
+  kind: string;
+  direction: string;
+  connector?: string | null;
+  notes?: string | null;
+  approved_at?: string;
+}
+
+export interface DevicePortInput {
+  label: string;
+  kind: string;
+  direction: string;
+  connector?: string;
+  notes?: string;
+}
+
 export interface DeviceKnowledge {
   knowledge_version: number;
   resource_id: string;
   approved_facts: ApprovedFact[];
   power_profiles: PowerProfile[];
+  ports?: DevicePort[];
 }
 
 export interface ResourceSnapshot {
@@ -204,7 +226,7 @@ export interface LabOSBackend {
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
   setup(): Promise<SetupSnapshot>;
-  saveSetup(value: SetupSnapshot): Promise<void>;
+  saveSetup(value: SetupSnapshot, baseEventId?: string): Promise<void>;
   capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent>;
   day(day: string, options?: { sessionId?: string; tag?: string; search?: string; offset?: number; limit?: number }): Promise<LabOSEvent[]>;
   revise(entryId: string, changes: Record<string, unknown>): Promise<void>;
@@ -270,6 +292,9 @@ export interface LabOSBackend {
       notes?: string;
     },
   ): Promise<PowerProfile>;
+  addDevicePort(target: string, input: DevicePortInput): Promise<DevicePort>;
+  editDevicePort(target: string, portId: string, input: DevicePortInput): Promise<DevicePort>;
+  removeDevicePort(target: string, portId: string): Promise<void>;
   doctor(providers?: AgentProvider[]): Promise<DoctorResult>;
   startReport(
     outputDir: string,

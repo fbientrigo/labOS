@@ -1,11 +1,18 @@
-import type {
-  ApprovedFact,
-  DeviceKnowledge,
-  PowerProfile,
-  PowerRail,
+import {
+  PORT_DIRECTIONS,
+  PORT_KINDS,
+  type ApprovedFact,
+  type DeviceKnowledge,
+  type DevicePort,
+  type DevicePortInput,
+  type PowerProfile,
+  type PowerRail,
 } from "./types";
 
 export interface DeviceKnowledgeActions {
+  addPort(input: DevicePortInput): Promise<void>;
+  editPort(portId: string, input: DevicePortInput): Promise<void>;
+  removePort(portId: string): Promise<void>;
   approveFact(input: {
     name: string;
     value: string;
@@ -383,6 +390,74 @@ function renderPowerProfiles(
   renderPowerForm(add, "Approve profile", null, actions.approvePowerProfile);
 }
 
+function renderPortForm(
+  container: HTMLElement,
+  submitLabel: string,
+  initial: DevicePort | null,
+  submit: (input: DevicePortInput) => Promise<void>,
+): void {
+  const form = container.createDiv({ cls: "labos-stack" });
+  const label = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Port label, e.g. Ethernet" } });
+  const kind = form.createEl("select", { cls: "labos-select", attr: { "aria-label": "Port type" } });
+  for (const value of PORT_KINDS) kind.createEl("option", { value, text: value });
+  const direction = form.createEl("select", { cls: "labos-select", attr: { "aria-label": "Port direction" } });
+  for (const value of PORT_DIRECTIONS) direction.createEl("option", { value, text: value });
+  const connector = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Connector, e.g. RJ45 (optional)" } });
+  const notes = form.createEl("input", { cls: "labos-input", attr: { placeholder: "Notes, e.g. 12 V nominal (optional)" } });
+  kind.value = initial?.kind ?? "other";
+  direction.value = initial?.direction ?? "unknown";
+  if (initial) {
+    label.value = initial.label;
+    connector.value = initial.connector ?? "";
+    notes.value = initial.notes ?? "";
+  }
+  const button = form.createEl("button", { text: submitLabel });
+  button.addEventListener("click", () => {
+    const labelValue = label.value.trim();
+    if (!labelValue) return;
+    void submit({
+      label: labelValue,
+      kind: kind.value,
+      direction: direction.value,
+      connector: connector.value.trim() || undefined,
+      notes: notes.value.trim() || undefined,
+    });
+  });
+}
+
+function renderPorts(
+  container: HTMLElement,
+  ports: DevicePort[],
+  actions: DeviceKnowledgeActions,
+): void {
+  const block = container.createDiv({ cls: "labos-device-panel" });
+  block.createEl("strong", { text: "INTERFACES / PORTS" });
+  block.createDiv({
+    cls: "labos-muted",
+    text: "Ports describe the device. Hardware setups record which ports are connected; setups already recorded keep their own copy of the port names.",
+  });
+
+  if (ports.length === 0) {
+    block.createDiv({ cls: "labos-empty-value", text: "No ports defined" });
+  }
+  for (const port of ports) {
+    const row = block.createDiv({ cls: "labos-approved-item" });
+    row.createDiv({ cls: "labos-approved-value", text: port.label });
+    const detail = [port.kind, port.direction, port.connector, port.notes].filter(Boolean).join(" · ");
+    row.createDiv({ cls: "labos-muted", text: detail });
+    const edit = row.createEl("details", { cls: "labos-device-form" });
+    edit.createEl("summary", { text: "Edit" });
+    renderPortForm(edit, "Save port", port, (input) => actions.editPort(port.port_id, input));
+    const remove = row.createEl("button", { text: "Remove port" });
+    remove.title = "Removes the definition only. Recorded setups keep their copy.";
+    remove.addEventListener("click", () => void actions.removePort(port.port_id));
+  }
+
+  const add = block.createEl("details", { cls: "labos-device-form" });
+  add.createEl("summary", { text: "+ Add port" });
+  renderPortForm(add, "Add port", null, actions.addPort);
+}
+
 export function renderDeviceKnowledge(
   container: HTMLElement,
   knowledge: DeviceKnowledge | null,
@@ -408,5 +483,6 @@ export function renderDeviceKnowledge(
     power_profiles: [],
   };
   renderPowerProfiles(container, current.power_profiles, actions);
+  renderPorts(container, current.ports ?? [], actions);
   renderFacts(container, current.approved_facts, actions);
 }

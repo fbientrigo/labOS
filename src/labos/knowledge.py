@@ -10,6 +10,8 @@ from .locking import ledger_lock
 from .resources import show_resource
 
 KNOWLEDGE_VERSION = 1
+PORT_KINDS = frozenset({"power", "network", "digital", "analog", "serial", "debug", "rf", "other"})
+PORT_DIRECTIONS = frozenset({"input", "output", "bidirectional", "unknown"})
 
 
 def _knowledge_path(home: Path) -> Path:
@@ -84,13 +86,14 @@ def _resource_entry(data: dict[str, Any], resource_id: str) -> dict[str, Any]:
     resources = data["resources"]
     entry = resources.setdefault(
         resource_id,
-        {"approved_facts": [], "power_profiles": []},
+        {"approved_facts": [], "power_profiles": [], "ports": []},
     )
     if not isinstance(entry, dict):
         raise RuntimeError("Malformed LabOS device knowledge resource entry.")
     facts = entry.setdefault("approved_facts", [])
     profiles = entry.setdefault("power_profiles", [])
-    if not isinstance(facts, list) or not isinstance(profiles, list):
+    ports = entry.setdefault("ports", [])
+    if not isinstance(facts, list) or not isinstance(profiles, list) or not isinstance(ports, list):
         raise RuntimeError("Malformed LabOS device knowledge lists.")
     return entry
 
@@ -166,20 +169,22 @@ def device_knowledge(home: Path, target: str) -> dict[str, Any]:
         data = _load_unlocked(home)
         existing = data["resources"].get(resource_id)
         if existing is None:
-            entry = {"approved_facts": [], "power_profiles": []}
+            entry = {"approved_facts": [], "power_profiles": [], "ports": []}
         else:
             if not isinstance(existing, dict):
                 raise RuntimeError("Malformed LabOS device knowledge resource entry.")
             entry = existing
         facts = entry.get("approved_facts", [])
         profiles = entry.get("power_profiles", [])
-        if not isinstance(facts, list) or not isinstance(profiles, list):
+        ports = entry.get("ports", [])
+        if not isinstance(facts, list) or not isinstance(profiles, list) or not isinstance(ports, list):
             raise RuntimeError("Malformed LabOS device knowledge lists.")
         return {
             "knowledge_version": KNOWLEDGE_VERSION,
             "resource_id": resource_id,
             "approved_facts": [dict(item) for item in facts],
             "power_profiles": [dict(item) for item in profiles],
+            "ports": [dict(item) for item in ports],
         }
 
 
@@ -358,3 +363,112 @@ def edit_power_profile(
         ]
         _write_unlocked(home, data)
         return dict(replacement)
+
+
+def _optional_text(value: Any, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be text")
+    return value.strip() or None
+
+
+def _port_fields(
+    label: str, kind: str, direction: str, connector: str | None, notes: str | None,
+) -> dict[str, Any]:
+    label = _string(label, "port label")
+    if kind not in PORT_KINDS:
+        raise ValueError(f"port kind must be one of: {', '.join(sorted(PORT_KINDS))}")
+    if direction not in PORT_DIRECTIONS:
+        raise ValueError(
+            f"port direction must be one of: {', '.join(sorted(PORT_DIRECTIONS))}"
+        )
+    return {
+        "label": label,
+        "kind": kind,
+        "direction": direction,
+        "connector": _optional_text(connector, "port connector"),
+        "notes": _optional_text(notes, "port notes"),
+    }
+
+
+def add_port(
+    home: Path,
+    target: str,
+    *,
+    label: str,
+    kind: str = "other",
+    direction: str = "unknown",
+    connector: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """Define a physical interface of a device. port_id is generated once and never changes."""
+    home = ensure_home(home)
+    resource_id = _resource_id(home, target)
+    fields = _port_fields(label, kind, direction, connector, notes)
+
+    with ledger_lock(home):
+        data = _load_unlocked(home)
+        entry = _resource_entry(data, resource_id)
+        if any(
+            str(item.get("label", "")).casefold() == fields["label"].casefold()
+            for item in entry["ports"]
+        ):
+            raise ValueError(f"port already exists: {fields['label']}; edit it instead")
+        port = {"port_id": _new_id("port"), **fields, "approved_at": now_iso()}
+        entry["ports"].append(port)
+        _write_unlocked(home, data)
+        return dict(port)
+
+
+def edit_port(
+    home: Path,
+    target: str,
+    port_id: str,
+    *,
+    label: str,
+    kind: str,
+    direction: str,
+    connector: str | None = None,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    home = ensure_home(home)
+    resource_id = _resource_id(home, target)
+    port_id = _clean(port_id, "port ID")
+    fields = _port_fields(label, kind, direction, connector, notes)
+
+    with ledger_lock(home):
+        data = _load_unlocked(home)
+        entry = _resource_entry(data, resource_id)
+        ports = entry["ports"]
+        if not any(item.get("port_id") == port_id for item in ports):
+            raise RuntimeError(f"Port not found: {port_id}")
+        if any(
+            item.get("port_id") != port_id
+            and str(item.get("label", "")).casefold() == fields["label"].casefold()
+            for item in ports
+        ):
+            raise ValueError(f"port already exists: {fields['label']}")
+        replacement = {"port_id": port_id, **fields, "approved_at": now_iso()}
+        entry["ports"] = [
+            replacement if item.get("port_id") == port_id else item for item in ports
+        ]
+        _write_unlocked(home, data)
+        return dict(replacement)
+
+
+def remove_port(home: Path, target: str, port_id: str) -> dict[str, Any]:
+    """Forget a port definition. Recorded setup snapshots keep their own port descriptors."""
+    home = ensure_home(home)
+    resource_id = _resource_id(home, target)
+    port_id = _clean(port_id, "port ID")
+
+    with ledger_lock(home):
+        data = _load_unlocked(home)
+        entry = _resource_entry(data, resource_id)
+        removed = next((item for item in entry["ports"] if item.get("port_id") == port_id), None)
+        if removed is None:
+            raise RuntimeError(f"Port not found: {port_id}")
+        entry["ports"] = [item for item in entry["ports"] if item.get("port_id") != port_id]
+        _write_unlocked(home, data)
+        return dict(removed)
