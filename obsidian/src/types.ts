@@ -111,6 +111,7 @@ export interface LabOSSettings {
   indexOnRename: boolean;
   indexOnDelete: boolean;
   noteIndex: Record<string, string>;
+  fingerprintFiles: string;
 }
 
 export interface NoteSyncEntry { id: string; text: string; links: Array<{ title: string; path?: string; kind?: string }>; }
@@ -234,7 +235,7 @@ export interface LabOSBackend {
   start(project: string, label?: string, workdir?: string, setup?: SetupSnapshot): Promise<void>;
   note(text: string): Promise<void>;
   checkpoint(state: CheckpointState, text?: string, options?: { tag?: string; occurredAt?: string; links?: Array<{ title: string; path?: string; kind?: string }>; setup?: SetupSnapshot; sessionId?: string }): Promise<LabOSEvent>;
-  attach(path: string, kind: "artifact" | "photo"): Promise<void>;
+  attach(path: string, kind: "artifact" | "photo", options?: { hash?: boolean; note?: string }): Promise<void>;
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
   setup(): Promise<SetupSnapshot>;

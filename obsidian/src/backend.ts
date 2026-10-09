@@ -139,8 +139,11 @@ export class CliLabOSBackend implements LabOSBackend {
     return JSON.parse(await this.run(state === "working" ? "good" : "bad", args)) as LabOSEvent;
   }
 
-  async attach(path: string, kind: "artifact" | "photo"): Promise<void> {
-    await this.run("attach", [path, "--kind", kind]);
+  async attach(path: string, kind: "artifact" | "photo", options: { hash?: boolean; note?: string } = {}): Promise<void> {
+    const args = [path, "--kind", kind];
+    if (options.hash) args.push("--hash");
+    if (options.note) args.push("--note", options.note);
+    await this.run("attach", args);
   }
 
   async end(text?: string): Promise<void> {

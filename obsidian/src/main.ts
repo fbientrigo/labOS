@@ -1,6 +1,7 @@
 import { Editor, FileSystemAdapter, Notice, Plugin, TFile, normalizePath } from "obsidian";
 
 import { CliLabOSBackend } from "./backend";
+import { fingerprintTargets } from "./fingerprint";
 import { LabOSSettingTab } from "./settings";
 import { SessionNotes } from "./notes";
 import type { LabOSBackend, LabOSSettings } from "./types";
@@ -30,6 +31,7 @@ const DEFAULT_SETTINGS: LabOSSettings = {
   indexOnRename: true,
   indexOnDelete: true,
   noteIndex: {},
+  fingerprintFiles: "",
 };
 
 export default class LabOSPlugin extends Plugin {
@@ -251,6 +253,19 @@ export default class LabOSPlugin extends Plugin {
     }
   }
 
+  /** Hash the files listed in Settings and attach them to a live checkpoint. Returns the files that failed. */
+  async fingerprintCheckpoint(eventId: string, historical: boolean): Promise<string[]> {
+    const skipped: string[] = [];
+    for (const path of fingerprintTargets(this.settings.fingerprintFiles, historical)) {
+      try {
+        await this.getBackend().attach(path, "artifact", { hash: true, note: "checkpoint " + eventId });
+      } catch {
+        skipped.push(path.split(/[\/]/).pop() || path);
+      }
+    }
+    return skipped;
+  }
+
   async writeDailyLogForEvent(event: { timestamp: string; payload: Record<string, unknown> }): Promise<boolean> {
     if (!this.settings.autoWriteDailyLog) return true; // The log is written on request ("Write today's log").
     const instant = new Date(String(event.payload.occurred_at ?? event.timestamp));
@@ -350,10 +365,12 @@ export default class LabOSPlugin extends Plugin {
   private async markCheckpoint(state: "working" | "broken"): Promise<void> {
     try {
       const event = await this.getBackend().checkpoint(state);
+      const skipped = await this.fingerprintCheckpoint(event.id, false);
       const logUpdated = await this.writeDailyLogForEvent(event);
       new Notice(!logUpdated
         ? "Checkpoint saved; daily log update failed. Use Retry pending LabOS daily log updates."
-        : state === "working" ? "Marked working." : "Marked broken.");
+        : skipped.length ? "Checkpoint saved; not fingerprinted: " + skipped.join(", ")
+        : state === "working" ? "Marked working." : "Marked broken.", skipped.length ? 8000 : undefined);
       await this.refreshViews();
     } catch (error) {
       this.showError(error);

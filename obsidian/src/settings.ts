@@ -185,6 +185,19 @@ export class LabOSSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Files to fingerprint at each checkpoint")
+      .setDesc("One absolute path per line, for example the ELF and the bitstream. Their SHA-256 is saved with every live Working/Broken checkpoint. Empty: off.")
+      .addTextArea((area) =>
+        area
+          .setPlaceholder("C:\path\to\firmware.elf")
+          .setValue(this.plugin.settings.fingerprintFiles)
+          .onChange(async (value) => {
+            this.plugin.settings.fingerprintFiles = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     const toggles: Array<[keyof Pick<LabOSSettings, "autoWriteDailyLog" | "copyQuickToNote" | "indexOnStartup" | "indexOnCreate" | "indexOnRename" | "indexOnDelete">, string, string]> = [
       ["autoWriteDailyLog", "Update the daily log on every capture", "Off: write it only from the menu ('Write today's log')."],
       ["copyQuickToNote", "Copy quick-box notes into the session note", "Adds each quick note to your connected note in the same format."],

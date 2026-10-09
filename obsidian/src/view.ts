@@ -2009,12 +2009,15 @@ export class LabOSView extends ItemView {
         sessionId: this.historicalSessionSelect?.value || undefined,
         setup: (occurredAt || !this.followsToday) ? this.selectedHistoricalSetup() : undefined,
       });
+      const historical = Boolean(occurredAt || !this.followsToday || this.historicalSessionSelect?.value);
+      const skipped = await this.plugin.fingerprintCheckpoint(event.id, historical);
       const logUpdated = await this.plugin.writeDailyLogForEvent(event);
       this.clearDraftOf(textarea);
       this.pendingImages = [];
       new Notice(!logUpdated
         ? "Checkpoint saved; daily log update failed. Use Retry log update."
-        : state === "working" ? "Marked working." : "Marked broken.");
+        : skipped.length ? "Checkpoint saved; not fingerprinted: " + skipped.join(", ")
+        : state === "working" ? "Marked working." : "Marked broken.", skipped.length ? 8000 : undefined);
     });
   }
 
