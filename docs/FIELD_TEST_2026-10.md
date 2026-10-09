@@ -87,6 +87,5 @@ Cada una con el problema que resuelve y como medir si funciono.
 
 ## Pendientes tuyos
 
-1. ¿Cual es la serie de la Zynq danada, 908016 o 908612?
-2. Abre Obsidian, comando LabOS "Rebuild note index" para que las 24 notas aparezcan conectadas por `labos-id`.
-3. Borrar `.obsidian/plugins/labos` (plugin viejo) si ya no lo usas.
+1. ¿Cual es la serie de la Zynq danada, 908016 o 908612? (La BD dice 908016, el reporte 09-30 dice #908612.)
+2. Hay dos carpetas de plugin con el mismo id `labos`: `.obsidian/plugins/labos` (build del 09-28, sin tocar desde el 09-30) y `.obsidian/plugins/labos-obsidian` (build actual, la que guarda `data.json`). Verificado: el indice de notas ya tiene las 25 notas con su ruta nueva. No borres nada; si quieres, mueve la vieja fuera del vault.
