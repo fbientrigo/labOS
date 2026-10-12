@@ -22,3 +22,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+# The repository-root install.py is intentionally outside the src/ package.
+pythonpath = ["."]
