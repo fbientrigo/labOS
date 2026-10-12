@@ -11,17 +11,24 @@ def _mock_commands(monkeypatch, fail_final_cli=False):
     calls = {"cli_help": 0}
 
     def fake_run(args, cwd):
+        if args[-2:] == ["run", "build"]:
+            # The installer needs the generated bundle, but no real npm build is run.
+            (Path(cwd) / "main.js").write_text("// mocked Obsidian bundle\n", encoding="utf-8")
         if "wheel" in args:
             wheel_index = args.index("--wheel-dir") + 1
             wheels = Path(args[wheel_index])
             (wheels / "labos-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
         if len(args) >= 3 and args[1:3] == ["-m", "venv"]:
             venv = Path(args[3])
-            scripts = venv / "Scripts"
+            scripts = venv / ("Scripts" if os.name == "nt" else "bin")
             scripts.mkdir(parents=True)
-            (scripts / "python.exe").write_text("python", encoding="utf-8")
-            (scripts / "labos.exe").write_text("cli", encoding="utf-8")
-        if args and str(args[0]).endswith("labos.exe") and "--help" in args:
+            (scripts / ("python.exe" if os.name == "nt" else "python")).write_text(
+                "python", encoding="utf-8"
+            )
+            (scripts / ("labos.exe" if os.name == "nt" else "labos")).write_text(
+                "cli", encoding="utf-8"
+            )
+        if args and Path(args[0]).name in {"labos.exe", "labos"} and "--help" in args:
             calls["cli_help"] += 1
             if fail_final_cli and calls["cli_help"] == 2:
                 raise RuntimeError("simulated verification failure")
