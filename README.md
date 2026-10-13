@@ -4,6 +4,8 @@
 
 **LabOS is an experimental evidence ledger for electronics and physics lab work.**
 
+<img width="3840" height="2160" alt="v3-questions" src="https://github.com/user-attachments/assets/5f384e86-1f7a-4e12-a8dc-deb15106e1aa" />
+
 The goal is not to create perfect laboratory notebooks. The goal is to make normal work leave enough cheap evidence that future-you can reconstruct:
 
 1. **What state was I in?**
