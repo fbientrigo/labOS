@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabOS Evidence Tree</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
+<style>
+  /* V1: light brand tree. Click -> capture -> one ledger -> recall. */
+  .poster { --navy: #102a49; --cyan: #11b9d4; --muted: #5d7186; --line: #dce7ef; color: var(--navy);
+    background:
+      linear-gradient(#b9d7e533 1px, transparent 1px) 0 0 / 100% 120px,
+      linear-gradient(90deg, #b9d7e533 1px, transparent 1px) 0 0 / 120px 100%,
+      linear-gradient(90deg, #f8fbfd, #ffffff 58%, #eaf5fa); }
+  .blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; }
+  .head-logo { left: 72px; top: 50px; display: flex; align-items: center; gap: 16px; }
+  .head-logo .logo { width: 74px; }
+  .wm { font-size: 46px; font-weight: 800; letter-spacing: -.05em; line-height: 1; }
+  .wm span { color: var(--cyan); }
+  .tag { margin-top: 6px; font-size: 11px; font-weight: 650; letter-spacing: .22em; color: var(--muted); }
+  .headline { left: 440px; top: 50px; width: 1410px; }
+  .headline h1 { margin: 0; font-size: 50px; line-height: 1.08; letter-spacing: -.035em; font-weight: 800; }
+  .headline h1 span { color: var(--cyan); }
+  .headline p { margin: 12px 0 0; font-size: 20px; color: var(--muted); max-width: 1150px; line-height: 1.4; }
+  .stage { top: 214px; display: flex; align-items: center; gap: 10px; }
+  .stage i { width: 30px; height: 30px; border-radius: 50%; background: var(--cyan); color: #fff; font-style: normal; font-weight: 700;
+    display: grid; place-items: center; font-size: 15px; box-shadow: 0 0 0 5px #11b9d422; }
+  .stage b { font-size: 21px; letter-spacing: -.01em; }
+  .stage span { color: var(--muted); font-size: 15px; }
+  .col { position: absolute; top: 268px; height: 728px; display: flex; flex-direction: column; }
+  .card { position: relative; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px;
+    box-shadow: 0 1px 2px #102a490d, 0 12px 32px -12px #102a4926; }
+  .card h3 { margin: 0; font-size: 19px; letter-spacing: -.015em; color: var(--navy); }
+  .card p { margin: 4px 0 0; font-size: 15px; line-height: 1.4; color: var(--muted); }
+  .split { display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: start; }
+  .root { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; }
+  .root b { font-size: 23px; letter-spacing: -.02em; display: block; }
+  .root span { font-size: 14.5px; color: var(--muted); }
+  .root .tabdot { width: 14px; height: 14px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 5px #11b9d422; }
+  .more { border-style: dashed; background: #ffffffaa; box-shadow: none; font-size: 14.5px; color: var(--muted); line-height: 1.5; }
+  .more b { color: var(--navy); }
+  .ledger { background: linear-gradient(180deg, #12345a, #0d2341); border: 0; color: #e6eef6; flex: 1; display: flex; flex-direction: column;
+    box-shadow: 0 24px 50px -18px #102a4980; }
+  .ledger .ui { --ob-bg: #0f2440; --ob-border: #ffffff1a; --ob-muted: #9fb3c8; --ob-text: #e6eef6; --ob-ok: #4ade80; --ob-err: #f87171; --lab-teal: #22d3ee; }
+  .ledger h3 { color: #fff; font-family: "JetBrains Mono", monospace; font-size: 20px; }
+  .ledger p { color: #9fb3c8; }
+  .badge { font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: #0d2341; background: var(--cyan); padding: 3px 8px; border-radius: 999px; vertical-align: 3px; margin-left: 8px; }
+  .ev-text { font-size: 13.5px; color: #e6eef6; grid-column: 2; }
+  .ledger .foot { margin-top: auto; padding-top: 12px; border-top: 1px solid #ffffff1a; font-size: 14px; color: #9fb3c8; }
+  .ledger .foot b { color: #fff; font-family: "JetBrains Mono", monospace; font-weight: 600; }
+  .paper { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: #fbfcfd; border: 1px solid var(--line); }
+  .paper h4 { margin: 0 0 2px; font-size: 15px; }
+  .footer { left: 0; right: 0; bottom: 0; height: 62px; display: flex; justify-content: center; align-items: center; gap: 56px;
+    background: #ffffffd9; border-top: 1px solid var(--line); font-size: 17px; font-weight: 600; }
+  .footer span::before { content: "✓"; display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 10px; border-radius: 50%;
+    background: #11b9d41f; color: #0891b2; font-size: 13px; font-weight: 800; }
+  .footer em { font-style: normal; font-weight: 400; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="poster" data-wires>
+  <svg class="wires"></svg>
+  <div class="content">
+    <div class="blob" style="left:1500px;top:-120px;width:420px;height:360px;background:#cdeef7"></div>
+    <div class="blob" style="left:-120px;top:820px;width:380px;height:320px;background:#dbe9f4"></div>
+
+    <div class="abs head-logo">
+      <div class="logo" data-logo="light"></div>
+      <div><div class="wm">Lab<span>OS</span></div><div class="tag">EXPERIMENTS REMEMBER</div></div>
+    </div>
+    <div class="abs headline">
+      <h1>Normal lab work in. <span>Evidence you can rebuild, out.</span></h1>
+      <p>LabOS is an Obsidian plugin for electronics and physics benches. Notes, wiring, measurements and checkpoints land in one append-only ledger — offline, no AI required.</p>
+    </div>
+
+    <div class="abs stage" style="left:72px"><i>1</i><b>Click</b><span>what you already do</span></div>
+    <div class="abs stage" style="left:440px"><i>2</i><b>Capture</b><span>LabOS adds time, IDs and context</span></div>
+    <div class="abs stage" style="left:1180px"><i>3</i><b>Record</b><span>one trail</span></div>
+    <div class="abs stage" style="left:1550px"><i>4</i><b>Recall</b><span>days or months later</span></div>
+
+    <!-- 1 · roots -->
+    <div class="col" style="left:72px;width:300px;justify-content:space-between">
+      <div class="card ui" style="border-color:#11b9d466">
+        <h3>Pick up where you stopped</h3>
+        <div class="btn cta" style="width:100%;margin:12px 0 8px;padding:10px;font-size:15px">Continue: tgc · Zynq trigger</div>
+        <p style="font-size:14px">Project, label and hardware setup come back in one click.</p>
+      </div>
+      <div class="card root" id="r-logs"><div><b>Logs</b><span>Notes, checkpoints, measurements</span></div><i class="tabdot"></i></div>
+      <div class="card root" id="r-setup"><div><b>Setup</b><span>Your bench, drawn and wired</span></div><i class="tabdot"></i></div>
+      <div class="card root" id="r-dev"><div><b>Devices</b><span>Instruments by serial number</span></div><i class="tabdot"></i></div>
+      <div class="card more"><b>☰ Everything else, on demand:</b> daily log, tag colors, note index, health check.</div>
+    </div>
+
+    <!-- 2 · capture -->
+    <div class="col" style="left:440px;width:660px;gap:14px">
+      <div class="card split ui" id="c-quick" style="height:150px">
+        <div><h3>Quick box</h3><p>One line. LabOS stamps the time.</p></div>
+        <div>
+          <div class="input" style="margin-bottom:10px">events disappear after ~70 s</div>
+          <div class="row"><span class="btn cta">Add note</span><span class="btn">✓ Working</span><span class="btn bad">✗ Broken</span><span class="input sel ph" style="flex:1">trigger</span></div>
+          <div class="muted" style="margin-top:9px;font-size:13px">No timestamps to type. No syntax to learn.</div>
+        </div>
+      </div>
+      <div class="card split ui" id="c-note" style="height:200px">
+        <div>
+          <h3>Your Markdown note</h3><p>Write freely, paste screenshots, then sync.</p>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;align-items:flex-start">
+            <span class="btn" style="font-size:13px;padding:4px 10px">Connect note</span><span class="btn" style="font-size:13px;padding:4px 10px">Sync note</span>
+          </div>
+        </div>
+        <div class="md" style="background:#fbfcfd;border:1px solid var(--line);border-radius:10px;padding:10px 14px;height:168px;overflow:hidden">
+          <div class="row" style="gap:6px;margin-bottom:6px"><span class="pill">labos-id 7f3a…</span><span class="pill">session tgc</span></div>
+          <h5>Zynq trigger debugging</h5>
+          <div style="display:flex;gap:12px">
+            <div style="flex:1">
+              <div class="entry"><span class="clock"></span>10:40</div>baseline before firmware change
+              <div class="entry"><span class="clock"></span>11:52</div>events disappear after ~70 s
+            </div>
+            <span class="scope" style="width:136px;height:72px;margin-top:12px"></span>
+          </div>
+        </div>
+      </div>
+      <div class="card split ui" id="c-setup" style="height:212px">
+        <div>
+          <h3>Setup canvas</h3><p>Drag devices, wire their ports. Commit freezes the bench as evidence.</p>
+          <span class="btn cta" style="margin-top:14px">Commit setup</span>
+        </div>
+        <div class="canvas" data-wires style="height:178px">
+          <svg class="wires"></svg>
+          <div class="scard" style="left:14px;top:14px;width:124px"><strong>Signal gen</strong><span class="muted">instrument</span><div class="pr">OUT<i class="h" id="p1"></i></div></div>
+          <div class="scard" style="left:150px;top:84px;width:124px"><strong>DRS4 board</strong><span class="muted">daq</span><div class="pr in">CH1<i class="h" id="p2"></i></div><div class="pr">FMC<i class="h" id="p3"></i></div></div>
+          <div class="scard" style="left:290px;top:14px;width:124px"><strong>Zynq ZC706</strong><span class="muted">board</span><div class="pr in">FMC<i class="h" id="p4"></i></div></div>
+        </div>
+      </div>
+      <div class="card split ui" id="c-dev" style="height:124px">
+        <div><h3>Devices</h3><p>Register once. Reuse in every setup.</p></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          <div class="dcard" style="display:block"><b>Zynq ZC706</b><span class="fp">SN-041</span></div>
+          <div class="dcard" style="display:block"><b>DRS4 board</b><span class="fp">DRS4-0117</span></div>
+          <div class="dcard" style="display:block"><b>Signal gen</b><span class="fp">33522B-88</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 · ledger -->
+    <div class="col" style="left:1180px;width:300px">
+      <div class="card ledger" id="ledger">
+        <i class="anchor" id="l1" style="left:0;top:18%"></i><i class="anchor" id="l2" style="left:0;top:35%"></i>
+        <i class="anchor" id="l3" style="left:0;top:64%"></i><i class="anchor" id="l4" style="left:0;top:91%"></i>
+        <i class="anchor" id="o1" style="right:0;top:24%"></i><i class="anchor" id="o2" style="right:0;top:68%"></i>
+        <h3>labos.db<span class="badge">append-only</span></h3>
+        <p style="margin-bottom:8px">Every click becomes an event. Old events are never edited.</p>
+        <div class="ui">
+          <div class="ev"><span class="time">09:12</span><span class="kind acc">session_start</span><span class="ev-text">tgc · Zynq trigger debugging</span></div>
+          <div class="ev"><span class="time">09:31</span><span class="kind acc">setup_snapshot</span><span class="ev-text">3 devices · 2 wires</span></div>
+          <div class="ev"><span class="time">10:02</span><span class="kind">note</span><span class="ev-text">DMA works</span></div>
+          <div class="ev"><span class="time">10:40</span><span class="kind ok">checkpoint ✓ working</span><span class="ev-text">baseline · <span class="hash">sha256 9f2c1a…</span></span></div>
+          <div class="ev"><span class="time">11:05</span><span class="kind">note</span><span class="ev-text">loaded new trigger firmware</span></div>
+          <div class="ev"><span class="time">11:52</span><span class="kind err">checkpoint ✗ broken</span><span class="ev-text">events disappear · <span class="hash">sha256 41be07…</span></span></div>
+          <div class="ev"><span class="time">12:20</span><span class="kind">entry_revision</span><span class="ev-text">edited in Markdown, synced</span></div>
+          <div class="ev"><span class="time">14:15</span><span class="kind">measurement</span><span class="ev-text">FPGA rail · 1.82 A</span></div>
+          <div class="ev"><span class="time">18:40</span><span class="kind acc">session_end</span><span class="ev-text">continue from DRS4 state</span></div>
+        </div>
+        <div class="foot">Exports to <b>events.jsonl</b> — plain text you own.</div>
+      </div>
+    </div>
+
+    <!-- 4 · recall -->
+    <div class="col" style="left:1550px;width:300px;gap:16px">
+      <div class="card ui" id="d-search">
+        <h3>Search any day</h3><p>By word, tag or session.</p>
+        <div class="row" style="margin:12px 0 6px;gap:6px"><span class="btn" style="padding:6px 9px">‹</span><span class="btn" style="padding:6px 9px">›</span><span class="btn">Today</span><span class="input" style="flex:1">disappear</span></div>
+        <div class="ev"><span class="time">11:52</span><span>Events <span class="hit">disappear</span> after ~70 s</span></div>
+        <div class="ev"><span class="time">Oct 02</span><span>Same <span class="hit">disappear</span> on old firmware</span></div>
+      </div>
+      <div class="card ui" id="d-report" style="flex:1">
+        <h3>Reports</h3><p>One click turns the ledger into a report.</p>
+        <div class="row" style="margin-top:12px"><span class="input sel" style="width:100px">factual</span><span class="btn cta" style="flex:1">Generate report</span></div>
+        <div class="paper">
+          <h4>Session Record · tgc</h4>
+          <div class="muted" style="margin-bottom:6px">Evidence coverage · 5/6 recorded</div>
+          <div class="cov"><span class="ok">✓</span><span>Hardware setup</span><span class="muted">3 devices</span></div>
+          <div class="cov"><span class="ok">✓</span><span>Notes</span><span class="muted">14</span></div>
+          <div class="cov"><span class="ok">✓</span><span>Checkpoints</span><span class="muted">2</span></div>
+          <div class="cov"><span class="ok">✓</span><span>File fingerprints</span><span class="muted">4</span></div>
+          <div class="cov" style="border:0"><span class="muted">–</span><span>Attachments</span><span class="muted">none</span></div>
+        </div>
+        <p style="font-size:13.5px;margin-top:10px">Factual mode needs no AI. Coverage shows what was recorded, not a score.</p>
+      </div>
+    </div>
+
+    <div class="abs footer"><span>Works offline</span><span>No AI required</span><span>Never commits your Git</span><span>Plain files <em>in your vault</em></span></div>
+  </div>
+  <svg class="dots"></svg>
+</div>
+<script>
+  window.LINKS = [
+    ["#r-logs", "#c-quick"], ["#r-logs", "#c-note"], ["#r-setup", "#c-setup"], ["#r-dev", "#c-dev"],
+    ["#c-quick", "#l1"], ["#c-note", "#l2"], ["#c-setup", "#l3"], ["#c-dev", "#l4"],
+    ["#o1", "#d-search"], ["#o2", "#d-report"],
+    ["#p1", "#p2", "rl", "mini"], ["#p3", "#p4", "rl", "mini"],
+  ];
+</script>
+<script src="landing.js"></script>
+</body>
+</html>

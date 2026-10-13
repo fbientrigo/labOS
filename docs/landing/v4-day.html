@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabOS Bench Day</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&family=Caveat:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
+<style>
+  /* V4: one real day at the bench on graph paper. Actions above the time trunk, receipts below. */
+  .poster { --ink: #13294b; --muted: #6f6a5c; --hand: #c2410c; --hand2: #0e7490; --wire: #13294b; --dot-ring: #fbf8f0; color: var(--ink);
+    background:
+      linear-gradient(#e3d7b97a 1px, transparent 1px) 0 0 / 120px 120px,
+      linear-gradient(90deg, #e3d7b97a 1px, transparent 1px) 0 0 / 120px 120px,
+      linear-gradient(#ece4cf88 1px, transparent 1px) 0 0 / 24px 24px,
+      linear-gradient(90deg, #ece4cf88 1px, transparent 1px) 0 0 / 24px 24px,
+      #fbf8f0; }
+  .wire { stroke-width: 2.5; }
+  .dot { r: 4.5; }
+  h1 { position: absolute; left: 72px; top: 34px; margin: 0; font: 600 76px/1 Newsreader, Georgia, serif; letter-spacing: -.02em; }
+  .sub { left: 76px; top: 124px; font: italic 500 34px Newsreader, Georgia, serif; color: var(--hand2); }
+  .brand { right: 64px; top: 50px; display: flex; align-items: center; gap: 12px; }
+  .brand .logo { width: 52px; }
+  .brand b { font: 800 34px/1 Inter, sans-serif; letter-spacing: -.05em; } .brand b span { color: #11b9d4; }
+  .brand small { display: block; margin-top: 5px; font-size: 9.5px; font-weight: 650; letter-spacing: .22em; color: var(--muted); }
+  .side { position: absolute; left: 20px; font: 600 12px Inter, sans-serif; letter-spacing: .2em; color: var(--muted); transform: rotate(-90deg); transform-origin: left top; white-space: nowrap; }
+  .upper { position: absolute; left: 72px; top: 236px; width: 1408px; height: 318px; display: grid; grid-template-columns: repeat(7, 1fr); align-items: end; }
+  .lower { position: absolute; left: 72px; top: 648px; width: 1408px; display: grid; grid-template-columns: repeat(7, 1fr); align-items: start; }
+  .act { margin: 0 7px; padding: 12px 12px 10px; background: #fff; border: 1px solid #e5dcc6; border-radius: 12px; box-shadow: 0 10px 22px -14px #13294b55; }
+  .act h3 { margin: 0 0 8px; font: 600 21px/1.1 Newsreader, Georgia, serif; }
+  .act .cap { margin-top: 8px; font-size: 13px; color: var(--muted); line-height: 1.35; }
+  .act .btn { font-size: 13px; padding: 5px 10px; }
+  .act .input { font-size: 13px; padding: 6px 8px; }
+  .act .scard { width: 104px; padding: 4px 8px; }
+  .rec { margin: 0 7px; padding: 10px 12px 12px; background: #fffdf8; border: 1px solid #e5dcc6; border-top: 2px dashed #cdbf9c; border-radius: 4px 4px 10px 10px;
+    font: 12.5px/1.5 "JetBrains Mono", Consolas, monospace; color: #3c4658; }
+  .rec b { display: block; font-weight: 600; color: var(--ink); font-size: 13px; }
+  .rec .ok { color: #15803d; } .rec .err { color: #dc2626; } .rec .acc { color: #0e7490; }
+  .trunk { position: absolute; left: 60px; top: 598px; width: 1440px; height: 4px; background: var(--ink); border-radius: 2px; }
+  .trunk::after { content: ""; position: absolute; right: -14px; top: -8px; border: 10px solid transparent; border-left: 16px solid var(--ink); border-right: 0; }
+  .ticks { position: absolute; left: 72px; top: 587px; width: 1408px; display: grid; grid-template-columns: repeat(7, 1fr); justify-items: center; }
+  .ticks span { padding: 3px 10px; border-radius: 999px; background: var(--ink); color: #fff; font: 600 13px "JetBrains Mono", monospace; }
+  .hand { position: absolute; font: 700 30px/1.05 Caveat, cursive; color: var(--hand); }
+  .hand.b { color: var(--hand2); }
+  svg.scribble { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 2; pointer-events: none; overflow: visible; }
+  svg.scribble path { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .morning { position: absolute; left: 1540px; top: 236px; width: 316px; display: flex; flex-direction: column; gap: 14px; }
+  .morning .hand { position: static; font-size: 40px; }
+  .mcard { padding: 14px 16px; background: #fff; border: 1px solid #e5dcc6; border-radius: 12px; box-shadow: 0 10px 22px -14px #13294b55; }
+  .mcard h4 { margin: 0 0 8px; font: 600 20px Newsreader, Georgia, serif; }
+  .trust { left: 72px; top: 1026px; font: italic 500 22px Newsreader, Georgia, serif; color: var(--muted); }
+  .trust b { font-style: normal; font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="poster" data-wires>
+  <svg class="wires"></svg>
+  <div class="content">
+    <h1>One day at the bench.</h1>
+    <div class="abs sub">You work. LabOS keeps the receipts.</div>
+    <div class="abs brand"><div class="logo" data-logo="light"></div><div><b>Lab<span>OS</span></b><small>EXPERIMENTS REMEMBER</small></div></div>
+
+    <div class="side" style="top:540px">WHAT YOU DO</div>
+    <div class="side" style="top:810px">WHAT LABOS KEEPS</div>
+
+    <div class="upper ui">
+      <div class="act" id="u1"><h3>Start</h3><span class="btn cta" style="width:100%">▶ Continue: tgc</span><div class="cap">Yesterday's project and setup, one click.</div></div>
+      <div class="act" id="u2"><h3>Rewire</h3>
+        <div class="canvas" data-wires style="height:118px">
+          <svg class="wires"></svg>
+          <div class="scard" style="left:8px;top:8px"><strong>Signal gen</strong><div class="pr">OUT<i class="h" id="m1"></i></div></div>
+          <div class="scard" style="left:50px;top:62px"><strong>DRS4 board</strong><div class="pr in">CH1<i class="h" id="m2"></i></div></div>
+        </div>
+        <span class="btn cta" style="margin-top:8px">Commit setup</span><div class="cap">The bench, versioned.</div></div>
+      <div class="act" id="u3"><h3>Quick note</h3><span class="input">DMA works</span><span class="btn cta" style="margin-top:8px">Add note</span><div class="cap">No timestamp to type.</div></div>
+      <div class="act" id="u4"><h3>It works</h3><span class="input">baseline before firmware change</span><span class="btn good" style="margin-top:8px">✓ Working</span><div class="cap">Your files get fingerprinted.</div></div>
+      <div class="act md" id="u5"><h3>Your note</h3>
+        <div class="entry" style="margin-top:0"><span class="clock"></span>11:05</div>
+        <div style="font-size:13px">loaded new trigger firmware</div>
+        <span class="scope" style="height:50px;margin:6px 0"></span>
+        <span class="btn">Sync note</span><div class="cap">Plain Markdown, synced.</div></div>
+      <div class="act" id="u6"><h3>It broke</h3><span class="input">events disappear after ~70 s</span><span class="btn bad" style="margin-top:8px">✗ Broken</span><div class="cap">The exact moment, kept.</div></div>
+      <div class="act" id="u7"><h3>Stop</h3><span class="input">continue from DRS4 state</span><span class="btn warn" style="margin-top:8px">End work</span><div class="cap">A note to tomorrow-you.</div></div>
+    </div>
+
+    <div class="trunk"></div>
+    <div class="ticks">
+      <span id="t1">09:12</span><span id="t2">09:31</span><span id="t3">10:02</span><span id="t4">10:40</span><span id="t5">11:05</span><span id="t6">11:52</span><span id="t7">18:40</span>
+    </div>
+
+    <div class="lower">
+      <div class="rec" id="d1"><b class="acc">session_start</b>project tgc<br>Zynq trigger debugging</div>
+      <div class="rec" id="d2"><b class="acc">setup_snapshot</b>3 devices · 2 wires<br>replaces v2</div>
+      <div class="rec" id="d3"><b>note</b>"DMA works"<br>block ^lab-3c1e</div>
+      <div class="rec" id="d4"><b class="ok">checkpoint ✓</b>sha256 9f2c1a7e<br>dma_test.log</div>
+      <div class="rec" id="d5"><b>markdown_edit</b>note synced<br>old text kept</div>
+      <div class="rec" id="d6"><b class="err">checkpoint ✗</b>sha256 41be07d3<br>trigger_fw.bit</div>
+      <div class="rec" id="d7"><b class="acc">session_end</b>next: continue<br>from DRS4 state</div>
+    </div>
+
+    <div class="hand" style="left:96px;top:846px">append-only:<br>nothing is rewritten later</div>
+    <div class="hand b" style="left:470px;top:880px">time + hidden IDs come<br>from LabOS, not from you</div>
+    <div class="hand" style="left:900px;top:860px">every ✓ / ✗ fingerprints<br>the files you care about</div>
+    <svg class="scribble">
+      <path d="M210 840 C 220 815, 250 810, 262 794" stroke="#c2410c"/><path d="M252 798 L262 794 L262 806" stroke="#c2410c"/>
+      <path d="M600 876 C 596 850, 590 830, 580 808" stroke="#0e7490"/><path d="M574 818 L580 808 L588 817" stroke="#0e7490"/>
+      <path d="M1000 856 C 990 830, 960 820, 925 808" stroke="#c2410c"/><path d="M936 805 L925 808 L932 818" stroke="#c2410c"/>
+      <path d="M1180 870 C 1210 850, 1230 830, 1236 808" stroke="#c2410c"/><path d="M1228 814 L1236 808 L1242 818" stroke="#c2410c"/>
+    </svg>
+
+    <i class="anchor" id="tend" style="left:1500px;top:600px"></i>
+    <div class="morning ui">
+      <div class="hand">next morning…</div>
+      <div class="mcard" id="m-in"><h4>Pick up exactly there</h4><span class="btn cta" style="width:100%">▶ Continue: tgc</span><div class="muted" style="margin-top:8px;font-size:13px">Setup v3 and 3 devices restored.</div></div>
+      <div class="mcard"><h4>Find it again</h4><span class="input">disappear</span>
+        <div class="ev" style="grid-template-columns:44px 1fr;margin-top:6px;border:0"><span class="time">11:52</span><span style="font-size:13px"><span class="err">✗</span> events <span class="hit">disappear</span> after ~70 s</span></div></div>
+      <div class="mcard"><h4>Hand it over</h4><span class="btn cta" style="width:100%">Generate report</span>
+        <div class="cov" style="margin-top:8px"><span class="ok">✓</span><span>Setup, notes, checkpoints</span><span class="muted">5/6</span></div>
+        <div class="muted" style="margin-top:6px;font-size:12.5px">Factual mode needs no AI.</div></div>
+    </div>
+
+    <div class="abs trust"><b>Offline.</b> No AI required. Never commits your Git. Plain files in your Obsidian vault.</div>
+  </div>
+  <svg class="dots"></svg>
+</div>
+<script>
+  window.LINKS = [
+    ...[1, 2, 3, 4, 5, 6, 7].flatMap((i) => [[`#u${i}`, `#t${i}`, "bt"], [`#t${i}`, `#d${i}`, "bt"]]),
+    ["#tend", "#m-in", "rl"],
+    ["#m1", "#m2", "rl", "mini"],
+  ];
+</script>
+<script src="landing.js"></script>
+</body>
+</html>

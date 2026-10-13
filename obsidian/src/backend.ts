@@ -57,7 +57,11 @@ export class CliLabOSBackend implements LabOSBackend {
   }
 
   private childEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
+    };
     const models: Array<[string, string]> = [
       ["LABOS_AGY_MODEL", this.settings.agyModel],
       ["LABOS_CODEX_MODEL", this.settings.codexModel],

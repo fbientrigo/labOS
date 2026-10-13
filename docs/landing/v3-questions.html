@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabOS Three Questions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="landing.css">
+<style>
+  /* V3: the three questions from the README, each answered by real LabOS UI, all landing in one report. */
+  .poster { --navy: #102a49; --muted: #6b6b66; --q1: #0891b2; --q2: #d97706; --q3: #7c3aed; --dot-ring: #f7f6f2; color: var(--navy);
+    background: radial-gradient(circle at 1px 1px, #d6d1c4 1.1px, transparent 1.4px) 0 0 / 28px 28px, #f7f6f2; }
+  .serif { font-family: Fraunces, Georgia, serif; }
+  .wire.q1, .dot.q1 { --wire: var(--q1); } .wire.q2, .dot.q2 { --wire: var(--q2); } .wire.q3, .dot.q3 { --wire: var(--q3); }
+  .wire { stroke-width: 3.5; }
+  .brand { left: 72px; top: 54px; display: flex; align-items: center; gap: 12px; }
+  .brand .logo { width: 46px; }
+  .brand b { font-size: 30px; font-weight: 800; letter-spacing: -.05em; } .brand b span { color: #11b9d4; }
+  .eyebrow { left: 72px; top: 140px; font-size: 13px; font-weight: 700; letter-spacing: .2em; color: var(--muted); }
+  h1 { position: absolute; left: 72px; top: 166px; width: 560px; margin: 0; font: 600 60px/1.08 Fraunces, Georgia, serif; letter-spacing: -.02em; }
+  h1 em { font-style: italic; font-weight: 500; color: #0e7490; }
+  .q { position: absolute; left: 72px; width: 548px; height: 128px; display: flex; align-items: center; gap: 22px; padding: 0 28px;
+    background: #fff; border-radius: 18px; border: 1px solid #e7e3d8; box-shadow: 0 14px 30px -18px #102a4940; }
+  .q .n { font: 700 64px/1 Fraunces, Georgia, serif; width: 46px; }
+  .q b { display: block; font: 600 30px/1.15 Fraunces, Georgia, serif; letter-spacing: -.01em; }
+  .q span { font-size: 16.5px; color: var(--muted); }
+  .q i { position: absolute; right: -1px; top: 50%; }
+  .closing { left: 72px; top: 870px; width: 560px; font-size: 19px; line-height: 1.5; color: #3d4a5c; }
+  .closing b { color: var(--navy); }
+  .trust { left: 72px; top: 990px; display: flex; gap: 22px; font-size: 14.5px; font-weight: 600; color: var(--muted); }
+  .trust span::before { content: "✓ "; color: var(--q1); font-weight: 800; }
+  .group { position: absolute; left: 720px; width: 540px; background: #fff; border-radius: 18px; border: 1px solid #e7e3d8;
+    padding: 16px 20px 18px; box-shadow: 0 14px 30px -18px #102a4940; }
+  .group .gh { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .group .gh b { font-size: 12px; font-weight: 800; letter-spacing: .16em; }
+  .group .gh span { font-size: 15px; color: var(--muted); }
+  .frag { border: 1px solid var(--ob-border); border-radius: 10px; padding: 10px 12px; background: #fcfcfb; }
+  .paper { position: absolute; left: 1350px; top: 140px; width: 510px; height: 790px; padding: 34px 36px; background: #fff; border-radius: 6px;
+    transform: rotate(1.4deg); box-shadow: 0 2px 4px #0000000d, 0 40px 80px -30px #102a4966; }
+  .paper .top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; letter-spacing: .18em; color: var(--muted); }
+  .paper h2 { margin: 14px 0 4px; font: 600 30px/1.15 Fraunces, Georgia, serif; }
+  .paper .meta { font-size: 14px; color: var(--muted); padding-bottom: 14px; border-bottom: 2px solid var(--navy); }
+  .sec { position: relative; padding: 16px 0 12px 18px; border-bottom: 1px solid #ecebe6; }
+  .sec::before { content: ""; position: absolute; left: 0; top: 18px; bottom: 14px; width: 4px; border-radius: 2px; background: var(--c); }
+  .sec h4 { margin: 0 0 6px; font: 600 19px Fraunces, Georgia, serif; color: var(--c); }
+  .sec div { font-size: 14px; line-height: 1.55; color: #33404f; }
+  .sec .t { display: inline-block; width: 48px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .paper .foot { margin-top: 14px; font: 12px "JetBrains Mono", monospace; color: var(--muted); }
+  .gen { left: 1530px; top: 66px; }
+</style>
+</head>
+<body>
+<div class="poster" data-wires>
+  <svg class="wires"></svg>
+  <div class="content">
+    <div class="abs brand"><div class="logo" data-logo="light"></div><b>Lab<span>OS</span></b></div>
+    <div class="abs eyebrow">FOR ELECTRONICS AND PHYSICS BENCHES</div>
+    <h1>Three weeks later, can you still <em>answer these?</em></h1>
+
+    <div class="q" style="top:418px"><span class="n" style="color:var(--q1)">1</span><div><b>What state was I in?</b><span>Project, hardware setup, devices</span></div><i class="anchor" id="q1"></i></div>
+    <div class="q" style="top:568px"><span class="n" style="color:var(--q2)">2</span><div><b>What changed?</b><span>Checkpoints, setup versions, edits</span></div><i class="anchor" id="q2"></i></div>
+    <div class="q" style="top:718px"><span class="n" style="color:var(--q3)">3</span><div><b>Where is the evidence?</b><span>Files, screenshots, fingerprints</span></div><i class="anchor" id="q3"></i></div>
+
+    <div class="abs closing"><b>LabOS answers all three</b> from the work you already do in Obsidian: a quick line, a wiring sketch, two buttons.</div>
+    <div class="abs trust"><span>Offline</span><span>No AI required</span><span>Never commits Git</span><span>Plain files</span></div>
+
+    <!-- 1 · state -->
+    <div class="group ui" id="g1" style="top:40px;height:330px">
+      <div class="gh"><b style="color:var(--q1)">1 · STATE</b><span>one click brings it back</span></div>
+      <span class="btn cta" style="width:100%;padding:9px;font-size:15px">▶ Continue: tgc · Zynq trigger debugging</span>
+      <div class="canvas" data-wires style="height:132px;margin:12px 0 10px">
+        <svg class="wires"></svg>
+        <div class="scard" style="left:12px;top:12px;width:140px"><strong>Signal gen</strong><span class="muted">instrument</span><div class="pr">OUT<i class="h" id="p1"></i></div></div>
+        <div class="scard" style="left:178px;top:30px;width:140px"><strong>DRS4 board</strong><span class="muted">daq</span><div class="pr in">CH1<i class="h" id="p2"></i></div><div class="pr">FMC<i class="h" id="p3"></i></div></div>
+        <div class="scard" style="left:344px;top:12px;width:140px"><strong>Zynq ZC706</strong><span class="muted">board</span><div class="pr in">FMC<i class="h" id="p4"></i></div></div>
+      </div>
+      <div class="row" style="gap:6px"><span class="pill">Zynq ZC706 · SN-041</span><span class="pill">DRS4 · 0117</span><span class="pill">33522B-88</span></div>
+      <div class="muted" style="margin-top:12px;font-size:14px">Project, label, devices and wiring restored from your last session.</div>
+    </div>
+
+    <!-- 2 · changes -->
+    <div class="group ui" id="g2" style="top:390px;height:300px">
+      <div class="gh"><b style="color:var(--q2)">2 · CHANGES</b><span>two buttons mark the moment</span></div>
+      <div class="row" style="margin-bottom:10px"><span class="input" style="flex:1">events disappear after ~70 s</span><span class="btn good">✓ Working</span><span class="btn bad">✗ Broken</span></div>
+      <div class="frag">
+        <div class="ev" style="grid-template-columns:48px 1fr"><span class="time">10:40</span><span><b class="kind ok">✓ WORKING</b> baseline before firmware change</span></div>
+        <div class="ev" style="grid-template-columns:48px 1fr"><span class="time">11:31</span><span><b class="kind" style="color:var(--q2)">SETUP v2 → v3</b> DRS4 CH1 ← Signal gen OUT</span></div>
+        <div class="ev" style="grid-template-columns:48px 1fr"><span class="time">11:52</span><span><b class="kind err">✗ BROKEN</b> events disappear after ~70 s</span></div>
+        <div class="ev" style="grid-template-columns:48px 1fr"><span class="time">12:20</span><span><b class="kind">REVISED</b> edited in Markdown, old text kept</span></div>
+      </div>
+    </div>
+
+    <!-- 3 · evidence -->
+    <div class="group ui" id="g3" style="top:710px;height:300px">
+      <div class="gh"><b style="color:var(--q3)">3 · EVIDENCE</b><span>linked, fingerprinted, findable</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="frag md" style="font-size:13.5px">
+          <div class="row" style="gap:6px"><span class="pill">labos-id 7f3a…</span></div>
+          <div class="entry"><span class="clock"></span>11:52</div>
+          events disappear after ~70 s
+          <span class="scope" style="height:62px;margin-top:6px"></span>
+        </div>
+        <div class="frag">
+          <div class="muted" style="margin-bottom:4px">File fingerprints at ✗ Broken</div>
+          <div style="font-size:13.5px;font-weight:600">trigger_fw.bit</div><div class="hash">sha256 41be07d3…</div>
+          <div style="font-size:13.5px;font-weight:600;margin-top:6px">dma_test.log</div><div class="hash">sha256 9f2c1a7e…</div>
+          <div style="font-size:13.5px;font-weight:600;margin-top:6px">scope_70s.png</div><div class="hash">linked from note</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;gap:6px"><span class="btn">‹</span><span class="btn">›</span><span class="input" style="flex:1">search: disappear</span></div>
+    </div>
+
+    <div class="abs gen ui"><span class="btn cta" style="font-size:16px;padding:10px 18px">Generate report</span></div>
+    <div class="paper" id="paper">
+      <i class="anchor" id="s1" style="left:0;top:250px"></i><i class="anchor" id="s2" style="left:0;top:470px"></i><i class="anchor" id="s3" style="left:0;top:690px"></i>
+      <div class="top"><span>SESSION RECORD</span><span>FACTUAL · NO AI</span></div>
+      <h2>tgc — Zynq trigger debugging</h2>
+      <div class="meta">2026-10-08 · 09:12 – 18:40 · 3 devices · 14 notes</div>
+      <div class="sec" style="--c:var(--q1)">
+        <h4>State</h4>
+        <div>Setup v3: Signal gen <b>OUT</b> → DRS4 <b>CH1</b>; DRS4 <b>FMC</b> → Zynq ZC706 <b>FMC</b></div>
+        <div>Devices: Zynq ZC706 (SN-041), DRS4 board (0117), 33522B-88</div>
+      </div>
+      <div class="sec" style="--c:var(--q2)">
+        <h4>Changes</h4>
+        <div><span class="t">10:40</span><b style="color:#15803d">✓</b> baseline before firmware change</div>
+        <div><span class="t">11:05</span>loaded new trigger firmware</div>
+        <div><span class="t">11:31</span>setup v2 → v3</div>
+        <div><span class="t">11:52</span><b style="color:#dc2626">✗</b> events disappear after ~70 s</div>
+        <div><span class="t">18:40</span>next: continue from DRS4 state</div>
+      </div>
+      <div class="sec" style="--c:var(--q3)">
+        <h4>Evidence</h4>
+        <div>trigger_fw.bit · <span class="mono" style="font-size:12.5px">41be07d3…</span></div>
+        <div>dma_test.log · <span class="mono" style="font-size:12.5px">9f2c1a7e…</span></div>
+        <div>scope_70s.png · session note 2026-10-08</div>
+      </div>
+      <div class="sec" style="border:0;--c:var(--navy)">
+        <h4>Coverage · 5/6 recorded</h4>
+        <div>✓ setup ✓ notes ✓ checkpoints ✓ fingerprints ✓ devices – attachments</div>
+      </div>
+      <div class="foot">built from labos.db · evidence sha256 a1b2c3d4e5f6</div>
+    </div>
+  </div>
+  <svg class="dots"></svg>
+</div>
+<script>
+  window.LINKS = [
+    ["#q1", "#g1", "rl", "q1"], ["#q2", "#g2", "rl", "q2"], ["#q3", "#g3", "rl", "q3"],
+    ["#g1", "#s1", "rl", "q1"], ["#g2", "#s2", "rl", "q2"], ["#g3", "#s3", "rl", "q3"],
+    ["#p1", "#p2", "rl", "mini"], ["#p3", "#p4", "rl", "mini"],
+  ];
+</script>
+<script src="landing.js"></script>
+</body>
+</html>

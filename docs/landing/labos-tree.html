@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabOS Tree</title>
+<style>
+  /* Poster mirrors obsidian/styles.css tokens and Obsidian's default light theme. */
+  :root {
+    --slate: #0f172a; --teal: #06b6d4; --orange: #f59e0b; --soft: #cbd5e1;
+    --accent: #7852ee; --bg: #ffffff; --bg2: #f2f3f5; --border: #e3e3e3;
+    --text: #222222; --muted: #6b6f76; --ok: #08a045; --err: #d13b3b;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #eef2f6; }
+  body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--text); font-size: 13px; }
+  .poster { position: relative; width: 1920px; height: 1080px; overflow: hidden;
+    background: radial-gradient(circle at 1px 1px, #d5dde7 1px, transparent 1.2px) 0 0 / 24px 24px, #f8fafc; }
+  svg.wires { position: absolute; inset: 0; z-index: 0; }
+  .wire { fill: none; stroke: var(--teal); stroke-width: 3; stroke-linejoin: round; }
+  .dot { fill: var(--teal); stroke: #fff; stroke-width: 2; }
+  .colhead { position: absolute; top: 12px; z-index: 1; font-size: 12px; font-weight: 700; letter-spacing: .16em; color: var(--teal); }
+  .colhead b { color: var(--slate); margin-right: 6px; }
+
+  .node { position: absolute; z-index: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px; box-shadow: 0 2px 10px rgba(15,23,42,.07); overflow: hidden; }
+  .node h4 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+  .node .desc { margin: 2px 0 9px; color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+  .node.tinted { border-color: color-mix(in srgb, var(--teal) 55%, white); }
+
+  /* Obsidian-like controls */
+  .btn { display: inline-block; padding: 4px 11px; border-radius: 5px; background: var(--bg2); border: 0;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); font: inherit; font-size: 12.5px; color: var(--text); white-space: nowrap; }
+  .btn.cta { background: var(--accent); color: #fff; box-shadow: none; }
+  .btn.warn { background: var(--err); color: #fff; box-shadow: none; }
+  .input { display: block; width: 100%; padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); font-size: 12.5px; color: var(--text); }
+  .input.ta { min-height: 52px; line-height: 1.4; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+  .muted { color: var(--muted); font-size: 11.5px; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+  .kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .mono { font-family: var(--mono); }
+  .pill { display: inline-flex; padding: 1px 8px; border-radius: 999px; background: var(--bg2); color: var(--muted);
+    text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+
+  /* Start column */
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .core { position: relative; width: 56px; height: 56px; flex: 0 0 56px; }
+  .seg { position: absolute; inset: 0; border: 6px solid transparent; border-top-color: var(--slate); border-radius: 50%; }
+  .seg.s1 { transform: rotate(-33deg); } .seg.s2 { border-top-color: var(--soft); transform: rotate(57deg); }
+  .seg.s3 { transform: rotate(147deg); } .seg.s4 { border-top-color: var(--soft); transform: rotate(237deg); }
+  .core i { position: absolute; width: 20px; height: 20px; left: 50%; top: 50%; border-radius: 50%; background: var(--teal);
+    transform: translate(-50%,-50%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 14%, transparent); }
+  .core u { position: absolute; width: 10px; height: 10px; right: 0; top: 5px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 3px #fff; }
+  .wordmark { font-size: 34px; font-weight: 750; letter-spacing: -.045em; line-height: 1; }
+  .wordmark span { color: var(--teal); }
+  .tagline { margin-top: 6px; font-size: 10px; font-weight: 650; letter-spacing: .18em; color: var(--muted); }
+  .burger { margin-left: auto; font-size: 16px; padding: 3px 11px; }
+  .navcard { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; }
+  .navcard b { font-size: 18px; letter-spacing: -.01em; }
+  .navcard .muted { display: block; margin-top: 2px; font-size: 12.5px; }
+  .port { width: 12px; height: 12px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 20%, transparent); flex: 0 0 12px; }
+  .menu div { padding: 4px 0; display: flex; gap: 8px; font-size: 12.5px; }
+  .menu div span { width: 16px; text-align: center; color: var(--muted); }
+
+  /* Session note */
+  .md { font-size: 12.5px; line-height: 1.45; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; background: #fcfcfd; }
+  .md h5 { margin: 0 0 2px; font-size: 14px; }
+  .callout { margin: 8px 0 1px; padding: 1px 8px; border-left: 3px solid var(--accent); color: var(--muted); font-size: 12px; }
+  .shot { display: inline-block; margin-top: 3px; width: 96px; height: 34px; border-radius: 4px; border: 1px solid var(--border);
+    background: linear-gradient(135deg,#e9eef5,#d5dde7); font-size: 10px; color: var(--muted); padding: 2px 5px; }
+
+  /* Setup canvas */
+  .canvas { position: relative; height: 134px; border: 1px dashed #cfd2d8; border-radius: 6px; background: var(--bg2); }
+  .canvas svg { position: absolute; inset: 0; }
+  .canvas .w { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+  .scard { position: absolute; top: 14px; width: 140px; height: 106px; padding: 8px; background: var(--bg);
+    border: 1px solid var(--accent); border-radius: 6px; }
+  .scard strong { display: block; font-size: 12.5px; line-height: 18px; }
+  .scard .muted { display: block; line-height: 16px; margin-bottom: 5px; }
+  .sp { display: flex; align-items: center; justify-content: space-between; height: 22px; font-size: 11px; }
+  .sp.in { flex-direction: row-reverse; }
+  .sp i { font-style: normal; color: var(--accent); }
+  .dirty { color: #d97706; font-weight: 600; font-size: 12px; }
+
+  /* Devices */
+  .dcards { display: flex; gap: 10px; }
+  .dcard { flex: 1; display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; }
+  .dcard b { display: block; font-size: 13px; }
+  .dcard .fp { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  /* Evidence */
+  .ev { display: flex; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); }
+  .ev:first-of-type { border-top: 0; }
+  .ev .ic { flex: 0 0 34px; height: 34px; border-radius: 8px; background: color-mix(in srgb, var(--teal) 14%, white);
+    color: #0891b2; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+  .ev b { display: block; font-size: 14px; } .ev span { color: var(--muted); font-size: 12.5px; line-height: 1.35; display: block; }
+
+  /* Entries and coverage */
+  .entry { border-top: 1px solid var(--border); padding: 6px 0; font-size: 12.5px; }
+  .entry .head { display: flex; gap: 8px; align-items: baseline; }
+  .hit { background: #fff3a8; border-radius: 2px; }
+  .cov { display: grid; grid-template-columns: 18px 1fr auto; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  .foot { position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: 44px; display: flex; align-items: center; justify-content: center; gap: 34px;
+    background: var(--slate); color: #e2e8f0; font-size: 15px; letter-spacing: .02em; }
+  .foot b { color: var(--teal); }
+  .wlabel { position: absolute; z-index: 1; font-size: 11.5px; color: #0e7490; font-weight: 600; background: #f8fafc; padding: 0 6px; }
+</style>
+</head>
+<body>
+<div class="poster" id="poster">
+
+<svg class="wires" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <!-- nav buttons to capture nodes -->
+  <path class="wire" d="M440 325 C 480 325, 460 170, 500 170"/>
+  <path class="wire" d="M440 325 C 480 325, 460 425, 500 425"/>
+  <path class="wire" d="M440 655 C 470 655, 470 675, 500 675"/>
+  <path class="wire" d="M440 895 C 470 895, 470 903, 500 903"/>
+  <!-- Reports button runs under everything to the Reports node -->
+  <path class="wire" d="M440 975 H468 V1010 H1520 V740 H1560"/>
+  <!-- capture nodes merge into evidence -->
+  <path class="wire" d="M1140 170 C 1175 170, 1165 400, 1200 400"/>
+  <path class="wire" d="M1140 425 C 1175 425, 1165 470, 1200 470"/>
+  <path class="wire" d="M1140 675 C 1175 675, 1165 560, 1200 560"/>
+  <path class="wire" d="M1140 903 C 1175 903, 1165 650, 1200 650"/>
+  <!-- evidence fans out -->
+  <path class="wire" d="M1480 550 C 1520 550, 1520 200, 1560 200"/>
+  <path class="wire" d="M1480 550 C 1520 550, 1520 560, 1560 560"/>
+  <g>
+    <circle class="dot" cx="440" cy="325" r="6"/><circle class="dot" cx="440" cy="655" r="6"/>
+    <circle class="dot" cx="440" cy="895" r="6"/><circle class="dot" cx="440" cy="975" r="6"/>
+    <circle class="dot" cx="500" cy="170" r="6"/><circle class="dot" cx="500" cy="425" r="6"/>
+    <circle class="dot" cx="500" cy="675" r="6"/><circle class="dot" cx="500" cy="903" r="6"/>
+    <circle class="dot" cx="1140" cy="170" r="6"/><circle class="dot" cx="1140" cy="425" r="6"/>
+    <circle class="dot" cx="1140" cy="675" r="6"/><circle class="dot" cx="1140" cy="903" r="6"/>
+    <circle class="dot" cx="1200" cy="400" r="6"/><circle class="dot" cx="1200" cy="470" r="6"/>
+    <circle class="dot" cx="1200" cy="560" r="6"/><circle class="dot" cx="1200" cy="650" r="6"/>
+    <circle class="dot" cx="1480" cy="550" r="6"/><circle class="dot" cx="1560" cy="200" r="6"/>
+    <circle class="dot" cx="1560" cy="560" r="6"/><circle class="dot" cx="1560" cy="740" r="6"/>
+  </g>
+</svg>
+<div class="wlabel" style="left:1180px;top:1000px">Reports button</div>
+
+<div class="colhead" style="left:40px"><b>1</b>START</div>
+<div class="colhead" style="left:500px"><b>2</b>CAPTURE — WHILE YOU WORK</div>
+<div class="colhead" style="left:1200px"><b>3</b>EVIDENCE</div>
+<div class="colhead" style="left:1560px"><b>4</b>USE IT LATER</div>
+
+<!-- ============ COLUMN 1 ============ -->
+<div class="node" style="left:40px;top:40px;width:400px;height:76px;padding:10px 14px">
+  <div class="brand">
+    <span class="core"><span class="seg s1"></span><span class="seg s2"></span><span class="seg s3"></span><span class="seg s4"></span><i></i><u></u></span>
+    <div><div class="wordmark">Lab<span>OS</span></div><div class="tagline">EXPERIMENTS REMEMBER</div></div>
+    <span class="btn burger">☰</span>
+  </div>
+</div>
+
+<div class="node tinted" style="left:40px;top:134px;width:400px;height:116px">
+  <h4>Start work</h4>
+  <div class="desc">Repeat setups are one click: your last project and hardware come back.</div>
+  <span class="btn cta" style="width:100%;text-align:center;padding:7px">Continue: LNA bias · day 2</span>
+</div>
+
+<div class="node navcard" style="left:40px;top:290px;width:400px;height:70px">
+  <div><b>Logs</b><span class="muted">Notes, measurements and checkpoints, day by day.</span></div><span class="port"></span>
+</div>
+
+<div class="node menu" style="left:40px;top:392px;width:400px;height:194px">
+  <h4>☰ Menu</h4>
+  <div class="desc" style="margin-bottom:4px">Compact first. The rest lives here.</div>
+  <div><span>📖</span>Open today's log</div>
+  <div><span>✎</span>Write today's log</div>
+  <div><span>🗄</span>Rebuild note index</div>
+  <div><span>🏷</span>Tag colors and retag…</div>
+  <div><span>🩺</span>Check setup</div>
+</div>
+
+<div class="node navcard" style="left:40px;top:620px;width:400px;height:70px">
+  <div><b>Setup</b><span class="muted">Draw the bench: devices and wires.</span></div><span class="port"></span>
+</div>
+<div class="node navcard" style="left:40px;top:860px;width:400px;height:70px">
+  <div><b>Devices</b><span class="muted">Your instruments, by physical fingerprint.</span></div><span class="port"></span>
+</div>
+<div class="node navcard" style="left:40px;top:945px;width:400px;height:60px">
+  <div><b>Reports</b><span class="muted">Turn the trail into a report.</span></div><span class="port"></span>
+</div>
+
+<!-- ============ COLUMN 2: capture ============ -->
+<div class="node" style="left:500px;top:40px;width:310px;height:260px">
+  <h4>Quick box</h4>
+  <div class="desc">Type a line. LabOS stamps the time. Mark the moment as working or broken.</div>
+  <div class="input ta">PSU at 3.3 V, LNA draws 118 mA</div>
+  <div class="row" style="margin:6px 0"><span class="input" style="width:auto;flex:1;color:var(--muted)">bias ▾</span></div>
+  <div class="row"><span class="btn cta">Capture note</span><span class="btn">✓ Working</span><span class="btn">✗ Broken</span></div>
+  <div class="muted" style="margin-top:8px">Time is automatic. You never type a timestamp.</div>
+</div>
+<div class="node" style="left:830px;top:40px;width:310px;height:260px">
+  <h4>Your Markdown note</h4>
+  <div class="desc">Keep writing in plain Obsidian. Paste screenshots. Sync when ready.</div>
+  <div class="md">
+    <h5>LNA bias — 2026-10-12</h5>
+    <div class="callout">🕘 10:42</div>
+    PSU 3.3 V, LNA draws 118 mA
+    <div class="callout">🕘 11:05</div>
+    Gain drops at 2.4 GHz <span class="shot">sweep.png</span>
+  </div>
+  <div class="row" style="margin-top:8px;gap:4px"><span class="btn" style="padding:4px 7px">New session note</span><span class="btn" style="padding:4px 7px">Connect note</span><span class="btn" style="padding:4px 7px">Sync note</span></div>
+</div>
+
+<div class="node" style="left:500px;top:320px;width:310px;height:210px">
+  <h4>Measurement</h4>
+  <div class="desc">Target, value and a screenshot in one record.</div>
+  <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px">
+    <span class="input">LNA supply</span><span class="input">118</span><span class="input">mA ▾</span>
+  </div>
+  <div class="input" style="margin:6px 0">Stable after 5 min</div>
+  <div class="row" style="justify-content:space-between"><span class="shot" style="margin:0">scope.png</span><span class="btn">Capture measurement</span></div>
+</div>
+<div class="node" style="left:830px;top:320px;width:310px;height:210px">
+  <h4>Checkpoints</h4>
+  <div class="desc">Working / Broken marks the moment. Files you list get a SHA-256 fingerprint.</div>
+  <div class="entry"><div class="head"><span class="muted">11:20</span><b class="ok">✓ WORKING</b></div><span class="fp mono muted" style="font-size:11px">bias.csv · sha256 9f2c1a7e…</span></div>
+  <div class="entry"><div class="head"><span class="muted">11:48</span><b class="err">✗ BROKEN</b></div><span class="fp mono muted" style="font-size:11px">gain_sweep.s2p · sha256 41be07d3…</span></div>
+</div>
+
+<div class="node" style="left:500px;top:550px;width:640px;height:250px">
+  <div class="row" style="justify-content:space-between"><h4>Setup canvas</h4><span><span class="dirty">● Unsaved changes</span>&nbsp; <span class="btn">Discard changes</span> <span class="btn cta">Commit setup</span></span></div>
+  <div class="desc">Drag devices, drag a port to another port to wire them. Nothing is saved until you commit, so every run knows its exact bench.</div>
+  <div class="canvas">
+    <svg width="612" height="134">
+      <path class="w" d="M142 77 L248 77"/>
+      <path class="w" d="M364 99 C 411 99, 411 77, 470 77"/>
+    </svg>
+    <div class="scard" style="left:14px"><strong>Bench PSU</strong><span class="muted">power</span><div class="sp">OUT <i>●</i></div></div>
+    <div class="scard" style="left:236px"><strong>LNA board v2</strong><span class="muted">dut</span><div class="sp in">VCC <i>●</i></div><div class="sp">OUT <i>●</i></div></div>
+    <div class="scard" style="left:458px"><strong>Scope</strong><span class="muted">instrument</span><div class="sp in">CH1 <i>●</i></div></div>
+  </div>
+  <div class="row" style="margin-top:8px"><span class="btn">+ Add device</span><span class="muted">Click a wire to name its ports. Click a device to replace or remove it.</span></div>
+</div>
+
+<div class="node" style="left:500px;top:820px;width:640px;height:165px">
+  <div class="row" style="justify-content:space-between"><h4>Devices</h4><span class="muted">3 registered</span></div>
+  <div class="desc">Register each instrument once by its physical fingerprint and a short alias. Reuse it in any setup.</div>
+  <div class="dcards">
+    <div class="dcard"><div><b>Bench PSU</b><span class="fp">SN-48213</span></div><span class="pill">power</span></div>
+    <div class="dcard"><div><b>LNA board v2</b><span class="fp">SN-LNA-0007</span></div><span class="pill">dut</span></div>
+    <div class="dcard"><div><b>Scope</b><span class="fp">SN-MSO-5521</span></div><span class="pill">instrument</span></div>
+  </div>
+</div>
+
+<!-- ============ COLUMN 3: evidence ============ -->
+<div class="node tinted" style="left:1200px;top:340px;width:280px;height:385px">
+  <h4 style="font-size:20px">One evidence trail</h4>
+  <div class="desc" style="margin-bottom:6px">Everything above lands here. You can rebuild what happened, when, and with which hardware.</div>
+  <div class="ev"><div class="ic">DB</div><div><b>labos.db</b><span>Append-only events. Old records are never silently edited.</span></div></div>
+  <div class="ev"><div class="ic">{ }</div><div><b>events.jsonl</b><span>Portable plain-text export.</span></div></div>
+  <div class="ev"><div class="ic">#</div><div><b>SHA-256</b><span>Fingerprints on your files at each checkpoint.</span></div></div>
+  <div class="ev"><div class="ic">ID</div><div><b>Time and IDs from LabOS</b><span>Hidden block IDs, never typed by you.</span></div></div>
+</div>
+
+<!-- ============ COLUMN 4: use later ============ -->
+<div class="node" style="left:1560px;top:60px;width:320px;height:225px">
+  <h4>Search and browse</h4>
+  <div class="desc">Jump to any day. Filter by tag or session.</div>
+  <div class="row"><span class="btn">‹</span><span class="btn">›</span><span class="btn">Today</span><span class="input" style="flex:1">gain <span class="hit">drop</span></span></div>
+  <div class="row" style="margin:6px 0"><span class="input" style="flex:1;color:var(--muted)">All tags ▾</span><span class="input" style="flex:1;color:var(--muted)">All sessions ▾</span></div>
+  <div class="entry"><div class="head"><span class="muted">11:05</span><span class="kind">note</span><span class="muted">bias</span></div>Gain <span class="hit">drops</span> at 2.4 GHz</div>
+  <div class="entry"><div class="head"><span class="muted">11:48</span><b class="err kind" style="color:var(--err)">✗ broken</b></div>gain_sweep.s2p fingerprinted</div>
+</div>
+
+<div class="node tinted" style="left:1560px;top:380px;width:320px;height:430px">
+  <h4 style="font-size:20px">Reports</h4>
+  <div class="desc">Generated from the recorded session. Raw evidence stays untouched.</div>
+  <div class="row"><span class="input" style="flex:0 0 108px;color:var(--text)">factual ▾</span><span class="btn cta" style="flex:1;text-align:center">Generate current report</span></div>
+  <div class="muted" style="margin:6px 0 12px">Modes: factual · reviewed · rigorous</div>
+  <div class="row" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:9px"><b>Evidence coverage · 5/6 recorded</b></div>
+  <div class="muted mono" style="margin:2px 0 6px">a1b2c3d4e5f6</div>
+  <div class="cov"><span class="ok">✓</span><span>Hardware setup</span><span class="muted">3 devices</span></div>
+  <div class="cov"><span class="ok">✓</span><span>Notes</span><span class="muted">12</span></div>
+  <div class="cov"><span class="ok">✓</span><span>Measurements</span><span class="muted">4</span></div>
+  <div class="cov"><span class="ok">✓</span><span>Checkpoints</span><span class="muted">2</span></div>
+  <div class="cov"><span class="ok">✓</span><span>File fingerprints</span><span class="muted">2</span></div>
+  <div class="cov"><span class="muted">–</span><span>Images</span><span class="muted">none</span></div>
+  <div class="muted" style="margin-top:10px">Coverage reports what was recorded; it is not a quality score.</div>
+</div>
+
+<div class="foot"><span><b>Offline</b> · no network needed</span><span><b>No LLM</b> required</span><span><b>Never</b> commits Git for you</span><span><b>Plain files</b> in your vault</span></div>
+</div>
+<script>
+  // Fit small windows; a 1920px viewport renders at 100% for the screenshot.
+  document.getElementById("poster").style.zoom = Math.min(1, innerWidth / 1920);
+</script>
+</body>
+</html>
