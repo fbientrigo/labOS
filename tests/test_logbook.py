@@ -11,11 +11,13 @@ from labos.logbook import (
     capture,
     effective_entries,
     current_setup,
+    list_sessions,
     record_asset_rename,
     render_daily_markdown,
     revise,
     save_setup,
     set_tag,
+    sync_entries,
     update_markdown_log,
     write_daily_markdown,
 )
@@ -90,6 +92,56 @@ def test_revisions_fold_tombstones_tags_and_day_queries(tmp_path: Path) -> None:
     assert effective_entries(home, day=day) == []
 
 
+def test_bulk_retag_respects_search_session_filter_and_handles_large_sets(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    s1 = start_session(home, "project1")
+    s1_id = s1["session_id"]
+    day = "2026-10-20"
+
+    # Create 105 alpha entries with tag 'shared' in session 1 (>100 to test beyond 100-row page limit)
+    for i in range(105):
+        capture(home, kind="note", text=f"alpha reading {i}", tag="shared", session_id=s1_id, occurred_at=f"{day}T10:00:{i%60:02d}-03:00")
+
+    # Create 5 beta entries with tag 'shared' in session 1
+    for i in range(5):
+        capture(home, kind="note", text=f"beta reading {i}", tag="shared", session_id=s1_id, occurred_at=f"{day}T11:00:{i:02d}-03:00")
+
+    end_session(home)
+    s2 = start_session(home, "project2")
+    s2_id = s2["session_id"]
+
+    # Create 5 alpha entries with tag 'shared' in session 2
+    for i in range(5):
+        capture(home, kind="note", text=f"alpha other session {i}", tag="shared", session_id=s2_id, occurred_at=f"{day}T12:00:{i:02d}-03:00")
+
+    # Retag restricted to query='alpha' and session_id=s1_id
+    retagged = bulk_retag(home, day=day, old_tag="shared", new_tag="target_alpha", query="alpha", session_id=s1_id)
+    assert len(retagged) == 105
+
+    # Check results across all entries
+    all_target = effective_entries(home, day=day, tag="target_alpha", limit=1000)
+    assert len(all_target) == 105
+
+    # Beta entries in s1 were untouched
+    s1_shared = effective_entries(home, day=day, tag="shared", session_id=s1_id, limit=1000)
+    assert len(s1_shared) == 5
+    assert all("beta" in e["effective_payload"]["text"] for e in s1_shared)
+
+    # Alpha entries in s2 were untouched
+    s2_shared = effective_entries(home, day=day, tag="shared", session_id=s2_id, limit=1000)
+    assert len(s2_shared) == 5
+    assert all("other session" in e["effective_payload"]["text"] for e in s2_shared)
+
+    from labos.cli import main
+    # CLI retag with --search
+    assert main(["--home", str(home), "tag", "retag", day, "shared", "target_cli", "--search", "beta"]) == 0
+    assert len(effective_entries(home, day=day, tag="target_cli", limit=1000)) == 5
+
+    # CLI retag without new flags preserves existing CLI calls
+    assert main(["--home", str(home), "tag", "retag", day, "target_cli", "retagged_all"]) == 0
+    assert len(effective_entries(home, day=day, tag="retagged_all", limit=1000)) == 5
+
+
 def test_day_pagination_returns_newest_first_then_older(tmp_path: Path) -> None:
     home = tmp_path / "home"
     start_session(home, "bench")
@@ -137,6 +189,74 @@ def test_checkpoint_retains_git_snapshot_and_adds_context_metadata(tmp_path: Pat
     write_daily_markdown(home, day, log_path)
     assert "### " + ordinary["payload"]["occurred_at"] + " · checkpoint" in log_path.read_text(encoding="utf-8")
     assert update_markdown_log(home, log_path, apply=True)["status"] == "no_op"
+
+
+def test_checkpoint_states_in_markdown_and_sync_log_roundtrips(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    work = tmp_path / "work"
+    work.mkdir()
+    start_session(home, "bench", workdir=work)
+    day = "2026-10-20"
+    t1 = f"{day}T10:00:00-03:00"
+    t2 = f"{day}T11:00:00-03:00"
+    t3 = f"{day}T12:00:00-03:00"
+    good = checkpoint(home, "working", "nominal voltages", occurred_at=t1)
+    bad = checkpoint(home, "broken", "overcurrent trip", occurred_at=t2)
+    empty = checkpoint(home, "working", occurred_at=t3)
+
+    log_path = tmp_path / "vault" / "LabOS" / "Logs" / f"{day}.md"
+    write_daily_markdown(home, day, log_path)
+    md_content = log_path.read_text(encoding="utf-8")
+
+    # Working and Broken are visibly distinguishable in Markdown
+    assert "Checkpoint: WORKING" in md_content
+    assert "Checkpoint: BROKEN" in md_content
+
+    # No-op roundtrip with unedited markdown
+    no_op_res = update_markdown_log(home, log_path, apply=True)
+    assert no_op_res["status"] == "no_op"
+
+    # Generated labels must not become observation text for empty checkpoint
+    entries = effective_entries(home, day=day)
+    empty_entry = next(e for e in entries if e["id"] == empty["id"])
+    assert empty_entry["effective_payload"].get("text") is None
+
+    # User edit to checkpoint text in Markdown retains state
+    edited_md = md_content.replace("nominal voltages", "nominal 3.3V and 5V")
+    log_path.write_text(edited_md, encoding="utf-8")
+    update_res = update_markdown_log(home, log_path, apply=True)
+    assert update_res["status"] == "updated"
+    assert good["id"] in update_res["changed"]
+
+    # Re-rendered Markdown still visibly distinguishes state and has updated text
+    updated_md = log_path.read_text(encoding="utf-8")
+    assert "Checkpoint: WORKING" in updated_md
+    assert "Checkpoint: BROKEN" in updated_md
+    assert "nominal 3.3V and 5V" in updated_md
+
+    # Raw events remain immutable
+    raw_events = read_events(home)
+    raw_good = next(e for e in raw_events if e["id"] == good["id"])
+    assert raw_good["payload"]["text"] == "nominal voltages"
+    assert raw_good["payload"]["state"] == "working"
+    raw_bad = next(e for e in raw_events if e["id"] == bad["id"])
+    assert raw_bad["payload"]["text"] == "overcurrent trip"
+    assert raw_bad["payload"]["state"] == "broken"
+
+
+def test_new_markdown_note_preserves_checkpoint_like_plain_text(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    start_session(home, "bench")
+    day = "2026-10-20"
+    path = tmp_path / "vault" / "LabOS" / "Logs" / f"{day}.md"
+    write_daily_markdown(home, day, path)
+    original = path.read_text(encoding="utf-8")
+    inserted = "State: WORKING\n\n"
+    path.write_text(original.replace("<!-- LabOS entries end -->", inserted + "<!-- LabOS entries end -->"), encoding="utf-8")
+
+    preview = update_markdown_log(home, path)
+
+    assert preview["new"][0]["text"] == "State: WORKING"
 
 
 def test_daily_markdown_roundtrip_preserves_user_text_and_retry_is_idempotent(tmp_path: Path) -> None:
@@ -372,3 +492,247 @@ def test_historical_checkpoint_does_not_join_the_save_time_session(tmp_path: Pat
     assert entry["payload"]["setup"] is None
     assert any(item["event_id"] == entry["id"] for item in build_session_record(home, historical["session_id"])["effective_entries"])
     assert not any(item["event_id"] == entry["id"] for item in build_session_record(home, current["session_id"])["effective_entries"])
+
+
+def test_save_setup_rejects_stale_base_event_without_appending(tmp_path: Path) -> None:
+    from labos.logbook import setup_history
+    home = tmp_path / "home"
+    start_session(home, "bench")
+    first = {"devices": [_device("a", "A")], "connections": []}
+    second = {"devices": [_device("a", "A"), _device("b", "B")], "connections": []}
+    save_setup(home, first, base_event_id=setup_history(home)[-1]["event_id"])  # start_session wrote the first snapshot
+    base = setup_history(home)[-1]["event_id"]
+    before = len(read_events(home))
+    with pytest.raises(RuntimeError, match="changed since"):
+        save_setup(home, second, base_event_id="evt_stale")
+    with pytest.raises(RuntimeError, match="changed since"):
+        save_setup(home, second, base_event_id="")  # "" only valid before any snapshot
+    assert len(read_events(home)) == before
+    save_setup(home, second, base_event_id=base)
+    assert current_setup(home) == second
+    assert len(read_events(home)) > before
+    save_setup(home, first)  # no base: legacy behavior
+    assert current_setup(home) == first
+
+
+def _ported(rid: str, alias: str, ports: list[tuple[str, str]]) -> dict:
+    device = _device(rid, alias)
+    device["ports"] = [{"port_id": pid, "label": label, "kind": "network", "direction": "bidirectional"}
+                       for pid, label in ports]
+    return device
+
+
+def _edge(a: str, ap: str, al: str, b: str, bp: str, bl: str) -> dict:
+    return {"id": "conn_1", "from": a, "from_port_id": ap, "from_port": al,
+            "to": b, "to_port_id": bp, "to_port": bl}
+
+
+def test_port_based_setup_validation(tmp_path: Path) -> None:
+    from labos.logbook import validate_setup
+
+    z = _ported("z", "Zynq", [("p1", "Ethernet"), ("p2", "UART TX"), ("p3", "UART RX")])
+    lap = _ported("l", "Laptop", [("q1", "Ethernet")])
+    good = {"setup_schema": 2, "devices": [z, lap],
+            "connections": [_edge("z", "p1", "Ethernet", "l", "q1", "Ethernet"),
+                            _edge("z", "p2", "UART TX", "z", "p3", "UART RX")]}  # loopback on one device
+    validate_setup(good)
+
+    def bad(**changes):
+        setup = {"devices": [z, lap], "connections": [_edge("z", "p1", "Ethernet", "l", "q1", "Ethernet")]}
+        setup.update(changes)
+        return setup
+
+    for connection, message in [
+        (_edge("z", "nope", "Ethernet", "l", "q1", "Ethernet"), "port_id"),
+        (_edge("z", "p1", "Renamed", "l", "q1", "Ethernet"), "match"),
+        (_edge("z", "p1", "Ethernet", "z", "p1", "Ethernet"), "itself"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            validate_setup(bad(connections=[connection]))
+    with pytest.raises(ValueError, match="unique"):
+        validate_setup(bad(devices=[_ported("z", "Zynq", [("p1", "A"), ("p1", "B")]), lap]))
+    with pytest.raises(ValueError, match="unique"):
+        validate_setup(bad(devices=[_ported("z", "Zynq", [("p1", "eth"), ("p2", "ETH")]), lap], connections=[]))
+    with pytest.raises(ValueError, match="setup_schema"):
+        validate_setup(bad(setup_schema="2"))
+    # legacy shape stays valid
+    validate_setup({"devices": [_device("a", "A"), _device("b", "B")],
+                    "connections": [{"from": "a", "to": "b", "from_port": "J1", "to_port": "P2"}]})
+
+
+def test_recorded_setup_is_independent_of_later_port_renames(tmp_path: Path) -> None:
+    from labos.knowledge import add_port, edit_port
+    from labos.logbook import setup_history, validate_setup
+    from labos.resources import add_resource
+
+    home = tmp_path / "home"
+    a = add_resource(home, fingerprint="fp-a", alias="Zynq", kind="board")
+    b = add_resource(home, fingerprint="fp-b", alias="Laptop", kind="other")
+    port_a = add_port(home, "Zynq", label="Ethernet", kind="network", direction="bidirectional")
+    port_b = add_port(home, "Laptop", label="Ethernet", kind="network", direction="bidirectional")
+
+    def instance(resource: dict, port: dict) -> dict:
+        return {"resource_id": resource["resource_id"], "fingerprint": resource["fingerprint"],
+                "alias": resource["alias"], "kind": resource["kind"], "activation": "unknown",
+                "ports": [{key: port[key] for key in ("port_id", "label", "kind", "direction")}]}
+
+    setup = {"setup_schema": 2,
+             "devices": [instance(a, port_a), instance(b, port_b)],
+             "connections": [_edge(a["resource_id"], port_a["port_id"], "Ethernet",
+                                   b["resource_id"], port_b["port_id"], "Ethernet")]}
+    start_session(home, "bench", setup=setup)
+    before = setup_history(home)[-1]["setup"]
+
+    edit_port(home, "Zynq", port_a["port_id"], label="ETH0", kind="network", direction="bidirectional")
+
+    after = setup_history(home)[-1]["setup"]
+    assert after == before == setup
+    assert after["connections"][0]["from_port"] == "Ethernet"
+    validate_setup(after)
+
+def test_list_sessions_reports_label_and_start_directory(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    started = start_session(home, "tgc", label="Zynq trigger", workdir=tmp_path)
+    end_session(home)
+    (item,) = list_sessions(home)
+    assert item["session_id"] == started["session_id"]
+    assert item["label"] == "Zynq trigger"
+    assert item["cwd"] == str(tmp_path.resolve())
+    assert item["ended_at"] is not None
+
+
+def test_sync_entries_revises_only_changed_entries_and_never_creates(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    note = {"title": "261008", "path": "Notes/261008.md", "kind": "note"}
+    first = capture(home, kind="note", text="", links=[note])
+    second = capture(home, kind="note", text="DMA works", links=[note])
+    before = len(read_events(home))
+
+    entries = [
+        {"id": first["id"], "text": "", "links": [note]},
+        {"id": second["id"], "text": "DMA works", "links": [note]},
+        {"id": "does-not-exist", "text": "x", "links": []},
+    ]
+    preview = sync_entries(home, entries)
+    assert preview["unchanged"] == [first["id"], second["id"]]
+    assert preview["unknown"] == ["does-not-exist"]
+    assert len(read_events(home)) == before
+
+    shot = {"title": "scope", "path": "Notes/scope.png", "kind": "image"}
+    entries[0] = {"id": first["id"], "text": "Trigger drops after 70 s", "links": [note, shot]}
+    preview = sync_entries(home, entries)
+    applied = sync_entries(home, entries, apply=True, expected_current=preview["expected"])
+    assert applied["changed"] == [first["id"]]
+    assert len(read_events(home)) == before + 1
+    again_preview = sync_entries(home, entries)
+    again = sync_entries(home, entries, apply=True, expected_current=again_preview["expected"])
+    assert again["changed"] == [] and len(read_events(home)) == before + 1
+
+    shown = {e["id"]: e["effective_payload"] for e in effective_entries(home, day=_today())}
+    assert shown[first["id"]]["text"] == "Trigger drops after 70 s"
+    assert shown[first["id"]]["links"] == [note, shot]
+    raw = next(e for e in read_events(home) if e["id"] == first["id"])
+    assert raw["payload"]["text"] == ""
+
+
+def test_sync_entries_skips_removed_entries(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="gone")
+    revise(home, entry["id"], {"removed": True})
+    result = sync_entries(home, [{"id": entry["id"], "text": "back", "links": []}], apply=True)
+    assert result["unknown"] == [entry["id"]] and result["events"] == []
+
+
+def _today() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def test_sync_entries_treats_a_moved_note_as_unchanged(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    old = {"title": "261008", "path": "Notes/261008.md", "kind": "note"}
+    entry = capture(home, kind="note", text="DMA works", links=[old])
+    record_asset_rename(home, "Notes/261008.md", "Archive/2026-10/261008.md")
+    moved = {"title": "261008", "path": "Archive/2026-10/261008.md", "kind": "note"}
+    result = sync_entries(home, [{"id": entry["id"], "text": "DMA works", "links": [moved]}], apply=True)
+    assert result["changed"] == [] and result["events"] == []
+
+
+def test_sync_entries_requires_review_and_preserves_external_correction(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="note version")
+    stale = [{"id": entry["id"], "text": "stale note version", "links": []}]
+    preview = sync_entries(home, stale)
+    revise(home, entry["id"], {"text": "panel correction"})
+    before = len(read_events(home))
+
+    result = sync_entries(home, stale, apply=True, expected_current=preview["expected"])
+
+    assert result["status"] == "conflict"
+    assert result["conflicts"][0]["current"]["text"] == "panel correction"
+    assert len(read_events(home)) == before
+    assert effective_entries(home, day=_today())[0]["effective_payload"]["text"] == "panel correction"
+
+
+def test_sync_entries_apply_without_preview_baseline_requires_review(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="before")
+    result = sync_entries(home, [{"id": entry["id"], "text": "after", "links": []}], apply=True)
+    assert result["status"] == "review_required"
+    assert not result["events"]
+    assert effective_entries(home, day=_today())[0]["effective_payload"]["text"] == "before"
+
+
+def test_sync_entries_allows_successive_reviewed_note_edits(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="first")
+    entries = [{"id": entry["id"], "text": "second", "links": []}]
+    first_preview = sync_entries(home, entries)
+    first_apply = sync_entries(home, entries, apply=True, expected_current=first_preview["expected"])
+    assert first_apply["status"] == "updated"
+
+    entries[0]["text"] = "third"
+    second_preview = sync_entries(home, entries)
+    second_apply = sync_entries(home, entries, apply=True, expected_current=second_preview["expected"])
+
+    assert second_apply["status"] == "updated"
+    assert effective_entries(home, day=_today())[0]["effective_payload"]["text"] == "third"
+
+
+def test_sync_entries_rejects_mixed_batch_atomically_if_one_entry_changed(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    first = capture(home, kind="note", text="one")
+    second = capture(home, kind="note", text="two")
+    entries = [{"id": first["id"], "text": "one note edit", "links": []},
+               {"id": second["id"], "text": "two note edit", "links": []}]
+    preview = sync_entries(home, entries)
+    revise(home, second["id"], {"text": "two panel edit"})
+    before = len(read_events(home))
+
+    result = sync_entries(home, entries, apply=True, expected_current=preview["expected"])
+
+    assert result["status"] == "conflict"
+    assert result["events"] == []
+    assert len(read_events(home)) == before
+    values = {item["id"]: item["effective_payload"]["text"]
+              for item in effective_entries(home, day=_today())}
+    assert values[first["id"]] == "one"
+    assert values[second["id"]] == "two panel edit"
+
+
+def test_sync_entries_rejects_batch_when_reviewed_entry_is_removed_before_apply(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    first = capture(home, kind="note", text="one")
+    second = capture(home, kind="note", text="two")
+    entries = [{"id": first["id"], "text": "one note edit", "links": []},
+               {"id": second["id"], "text": "two note edit", "links": []}]
+    preview = sync_entries(home, entries)
+    revise(home, second["id"], {"removed": True})
+    before = len(read_events(home))
+
+    result = sync_entries(home, entries, apply=True, expected_current=preview["expected"])
+
+    assert result["status"] == "conflict"
+    assert {item["entry_id"] for item in result["conflicts"]} == {second["id"]}
+    assert result["events"] == []
+    assert len(read_events(home)) == before
+    assert effective_entries(home, day=_today())[0]["id"] == first["id"]

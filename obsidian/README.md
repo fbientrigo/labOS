@@ -6,7 +6,11 @@ The plugin does **not** implement a second evidence store. It executes the exist
 
 ## Features
 
-- right-side LabOS panel with primary **Today / Devices / Reports** navigation;
+- right-side LabOS panel with primary **Logs / Setup / Devices / Reports** navigation;
+- interactive hardware setup canvas with cards, port-level wiring, and atomic draft commit;
+- session-scoped and day-scoped drafts preserving uncommitted text and pasted images across view switches;
+- inline shorthand commands (`!ok`, `!broken`, `!m 12mA @target`, `#tag`) directly in the quick box;
+- SHA-256 fingerprinting of configured working files during WORKING / BROKEN checkpoints;
 - device list and device-specific operational pages;
 - register/correct device identity from Obsidian without exposing the opaque ID in normal use;
 - optional device selection when starting work;
@@ -21,7 +25,21 @@ The plugin does **not** implement a second evidence store. It executes the exist
 - explicit human-approved facts and multi-rail Power Profiles with provenance;
 - command to capture selected editor text;
 - commands for WORKING / BROKEN;
-- configurable LabOS executable, evidence home, default project/workdir, and timeline length;\n- on-demand AI report generation with configurable worker, validator, and critic;\n- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
+- configurable LabOS executable, evidence home, default project/workdir, and timeline length;
+- on-demand AI report generation with configurable worker, validator, and critic (or 100% deterministic Factual mode without AI);
+- editable Markdown, standalone LaTeX, and an Overleaf-ready ZIP.
+
+## Session notes
+
+Write in your own Markdown note; LabOS adds the structure.
+
+- **Connect this note** (button or command) adds `labos-id` and `labos-sessions` to the note's properties. The id lives in the note, so you can move it to any folder and it stays connected.
+- **New entry** (bind a hotkey under Settings > Hotkeys) inserts a small clock callout such as `~01:10` at the cursor. LabOS writes the time (rounded to 5 minutes); you never type it. Write or paste anything below it, including screenshots.
+- **Sync note** saves what changed under each entry as an append-only revision. Entries are found by a hidden id, not by the visible time.
+- **New session note** creates `YYMMDD.md` in the notes folder (optionally from `LabOS/Templates/session-note.md`) and connects it.
+- Optional: copy quick-box notes into the connected note (Settings > Notes and index).
+
+The menu (☰) holds the daily log (open/write), tags, and **Rebuild note index**. The index is a small id-to-path table; it never scans the vault unless you ask.
 
 ## Requirements
 
@@ -58,7 +76,7 @@ install still requires enabling LabOS under Community plugins.
 Create:
 
 ```text
-<Vault>/.obsidian/plugins/labos/
+<Vault>/.obsidian/plugins/labos-obsidian/
 ```
 
 and copy into it:
@@ -71,7 +89,7 @@ styles.css
 
 Then reload Obsidian, enable **LabOS** under Community plugins, and open it from the ribbon or command palette.
 
-For development, placing/symlinking this directory at `<Vault>/.obsidian/plugins/labos` avoids copying files after every build.
+For development, placing/symlinking this directory at `<Vault>/.obsidian/plugins/labos-obsidian` avoids copying files after every build. If an older `<Vault>/.obsidian/plugins/labos` directory exists from earlier manual tests, remove it so Obsidian does not see duplicate copies with the same manifest ID `labos`.
 
 GitHub Actions also publishes those three files together as the `labos-obsidian` build artifact.
 
@@ -87,7 +105,9 @@ pip install -e .
 
 If Obsidian cannot find `labos` because it was launched outside your shell environment, set an absolute executable path in **Settings -> LabOS -> LabOS executable**.
 
-Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.\n\nUnder **Reports**, choose the default mode. Factual requires no AI; Reviewed uses worker+validator; Rigorous adds critic, revision, and final validation. Advanced settings select providers and optional explicit model pins for provenance. The corresponding local CLIs must already be installed and authenticated for AI modes. See [`../docs/AI_REPORTS.md`](../docs/AI_REPORTS.md).
+Set **Default work directory** to the repo you most often use, or change the workdir in the Start panel. LabOS stores that directory in the session; later WORKING/BROKEN/END snapshots keep using the same repo even though the commands originate from Obsidian.
+
+Under **Reports**, choose the default mode. Factual requires no AI; Reviewed uses worker+validator; Rigorous adds critic, revision, and final validation. Advanced settings select providers and optional explicit model pins for provenance. The corresponding local CLIs must already be installed and authenticated for AI modes. See [`../docs/AI_REPORTS.md`](../docs/AI_REPORTS.md).
 
 ## Data ownership
 
@@ -105,7 +125,7 @@ Removing the plugin does not make LabOS data unreadable or unusable.
 
 - mobile support;
 - HTTP service;
-- AI/Dreams;
+- background AI agents or Dreams (AI reporting is derived and on-demand only);
 - semantic search;
 - resource ontology;
 - automatic filesystem monitoring;

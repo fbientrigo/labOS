@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from labos.ledger import add_note, end_session, start_session
+from labos.ledger import add_note, end_session, read_events, start_session
+from labos.logbook import capture, current_setup, save_setup
 from labos.resources import (
     add_resource,
     edit_resource,
@@ -215,3 +216,116 @@ def test_cross_process_resource_registry_writes_are_serialized(tmp_path: Path) -
     resources = list_resources(home)
     assert len(resources) == 16
     assert len({r["fingerprint"] for r in resources}) == 16
+
+
+def test_start_use_capture_save_setup_retains_device(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    work = tmp_path / "work"
+    work.mkdir()
+    start_session(home, "tgc", workdir=work, setup={"devices": [], "connections": []})
+    dev = add_resource(home, fingerprint="FP-001", alias="DUT-A", kind="board")
+
+    # Reproduction sequence: use_resource on registered device
+    use_resource(home, dev["resource_id"])
+
+    # setup and active resources must be coherent immediately
+    setup_now = current_setup(home)
+    assert any(d["resource_id"] == dev["resource_id"] for d in setup_now["devices"])
+
+    # capture note embeds the coherent setup
+    note = capture(home, kind="note", text="baseline observation")
+    assert note["payload"]["setup"] is not None
+    assert any(d["resource_id"] == dev["resource_id"] for d in note["payload"]["setup"]["devices"])
+
+    # saving current_setup must NOT remove DUT-A
+    save_setup(home, setup_now)
+    events_after = read_events(home)
+    # DUT-A must NOT have any resource_remove event
+    assert not any(e["type"] == "resource_remove" and e["payload"].get("resource_id") == dev["resource_id"] for e in events_after)
+    active = resource_context_timeline(events_after)["active_at_end"]
+    assert any(r["resource_id"] == dev["resource_id"] for r in active)
+
+
+def test_use_resource_starts_from_the_active_sessions_setup_only(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    work = tmp_path / "work"
+    work.mkdir()
+    prior = add_resource(home, fingerprint="FP-PRIOR", alias="Prior", kind="board")
+    current = add_resource(home, fingerprint="FP-CURRENT", alias="Current", kind="board")
+
+    start_session(home, "first", workdir=work, setup={"devices": [{
+        "resource_id": prior["resource_id"], "fingerprint": prior["fingerprint"],
+        "alias": prior["alias"], "kind": prior["kind"],
+    }], "connections": []})
+    end_session(home)
+    start_session(home, "second", workdir=work)
+
+    use_resource(home, current["resource_id"])
+
+    assert [device["resource_id"] for device in current_setup(home)["devices"]] == [current["resource_id"]]
+
+
+def test_remove_resource_prunes_connections_and_readd_preserves_card(tmp_path: Path) -> None:
+    home = tmp_path / "labos"
+    work = tmp_path / "work"
+    work.mkdir()
+    start_session(home, "tgc", workdir=work)
+    dev_a = add_resource(home, fingerprint="FP-A", alias="Device A", kind="board")
+    dev_b = add_resource(home, fingerprint="FP-B", alias="Device B", kind="psu")
+
+    # Initial setup with custom coordinates, ports, and a connection
+    setup = {
+        "devices": [
+            {"resource_id": dev_a["resource_id"], "fingerprint": "FP-A", "alias": "Device A", "kind": "board", "activation": "active", "x": 120, "y": 240, "ports": [{"port_id": "P1", "label": "P1"}]},
+            {"resource_id": dev_b["resource_id"], "fingerprint": "FP-B", "alias": "Device B", "kind": "psu", "activation": "active", "x": 300, "y": 240, "ports": [{"port_id": "VOUT", "label": "VOUT"}]},
+        ],
+        "connections": [
+            {"from": dev_b["resource_id"], "to": dev_a["resource_id"], "from_port": "VOUT", "to_port": "P1"},
+        ],
+        "layout_extension": {"zoom": 1.25, "note": "retain unknown setup data"},
+    }
+    save_setup(home, setup)
+
+    # Removal of Device A prunes the incident connection
+    remove_resource(home, "Device A")
+    setup_after_remove = current_setup(home)
+    assert len(setup_after_remove["devices"]) == 1
+    assert setup_after_remove["devices"][0]["resource_id"] == dev_b["resource_id"]
+    # Incident connection is pruned
+    assert len(setup_after_remove["connections"]) == 0
+    assert setup_after_remove["layout_extension"] == setup["layout_extension"]
+
+    # Re-adding Device A preserves prior card (layout, ports) and uses unknown activation
+    use_resource(home, "Device A")
+    setup_after_readd = current_setup(home)
+    readded_card = next(d for d in setup_after_readd["devices"] if d["resource_id"] == dev_a["resource_id"])
+    assert readded_card["x"] == 120
+    assert readded_card["y"] == 240
+    assert readded_card["ports"] == [{"port_id": "P1", "label": "P1"}]
+    assert readded_card["activation"] == "unknown"
+    assert current_setup(home)["layout_extension"] == setup["layout_extension"]
+
+
+def test_use_resource_atomicity_and_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "labos"
+    work = tmp_path / "work"
+    work.mkdir()
+    start_session(home, "tgc", workdir=work)
+    dev = add_resource(home, fingerprint="FP-FAIL", alias="Device Fail", kind="board")
+    events_before = read_events(home)
+
+    import labos.logbook
+
+    def fail_validate(setup: dict) -> None:
+        if any(d.get("resource_id") == dev["resource_id"] for d in setup.get("devices", [])):
+            raise ValueError("simulated validation failure")
+        return None
+
+    monkeypatch.setattr(labos.logbook, "validate_setup", fail_validate)
+
+    with pytest.raises(ValueError, match="simulated validation failure"):
+        use_resource(home, dev["resource_id"])
+
+    # Rollback must leave events exactly as before (neither resource_add nor setup_snapshot)
+    events_after = read_events(home)
+    assert events_after == events_before

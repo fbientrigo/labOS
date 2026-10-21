@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 
 import type LabOSPlugin from "./main";
-import type { AgentProvider, ReportMode } from "./types";
+import type { AgentProvider, LabOSSettings, ReportMode } from "./types";
 
 const PROVIDERS: AgentProvider[] = ["agy", "codex", "claude"];
 
@@ -169,5 +169,53 @@ export class LabOSSettingTab extends PluginSettingTab {
             }
           }),
       );
+
+    containerEl.createEl("h3", { text: "Notes and index" });
+
+    new Setting(containerEl)
+      .setName("Session notes folder")
+      .setDesc("Where 'New session note' creates YYMMDD.md. Connected notes can live anywhere and can be moved freely.")
+      .addText((text) =>
+        text
+          .setPlaceholder("LabOS/Notes")
+          .setValue(this.plugin.settings.notesFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.notesFolder = value.trim() || "LabOS/Notes";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Files to fingerprint at each checkpoint")
+      .setDesc("One absolute path per line, for example the ELF and the bitstream. Their SHA-256 is saved with every live Working/Broken checkpoint. Empty: off.")
+      .addTextArea((area) =>
+        area
+          .setPlaceholder("C:\path\to\firmware.elf")
+          .setValue(this.plugin.settings.fingerprintFiles)
+          .onChange(async (value) => {
+            this.plugin.settings.fingerprintFiles = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    const toggles: Array<[keyof Pick<LabOSSettings, "autoWriteDailyLog" | "copyQuickToNote" | "indexOnStartup" | "indexOnCreate" | "indexOnRename" | "indexOnDelete">, string, string]> = [
+      ["autoWriteDailyLog", "Update the daily log on every capture", "Off: write it only from the menu ('Write today's log')."],
+      ["copyQuickToNote", "Copy quick-box notes into the session note", "Adds each quick note to your connected note in the same format."],
+      ["indexOnStartup", "Build the note index at startup", "Off by default because a scan slows Obsidian starting. Use menu > Rebuild note index instead."],
+      ["indexOnCreate", "Index new and edited connected notes", "Cheap: reads only the note that changed."],
+      ["indexOnRename", "Follow moved notes and linked files", "Updates connected-note paths and explicitly linked LabOS assets when a vault file is renamed. Turn off to skip rename processing."],
+      ["indexOnDelete", "Forget deleted notes", "Removes deleted notes from the index."],
+    ];
+    for (const [key, name, desc] of toggles) {
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addToggle((toggle) =>
+          toggle.setValue(this.plugin.settings[key]).onChange(async (value) => {
+            this.plugin.settings[key] = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+    }
   }
 }

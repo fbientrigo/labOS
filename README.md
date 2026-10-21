@@ -81,7 +81,7 @@ From the repository root, run:
 python install.py "C:\path\to\your vault"
 ```
 
-The installer checks Python 3.11+, Node/npm, and the vault, builds the plugin, stages and verifies a LabOS wheel and plugin bundle, then updates the per-user LabOS virtual environment and `.obsidian/plugins/labos-obsidian`. Re-running it updates the installation while preserving plugin settings, vault notes/attachments, and `~/labos-data`. Reload Obsidian after installation; first-time users must enable LabOS under Community plugins.
+The installer checks Python 3.11+, Node/npm, and the vault, builds the plugin, stages and verifies a LabOS wheel and plugin bundle, then updates the per-user LabOS virtual environment and `.obsidian/plugins/labos-obsidian` (manifest id `labos`). Re-running it updates the installation while preserving plugin settings, vault notes/attachments, and `~/labos-data`. If you previously installed manually into `.obsidian/plugins/labos`, remove that redundant folder to prevent duplicate plugin collisions. Reload Obsidian after installation; first-time users must enable LabOS under Community plugins.
 
 ## Current commands
 
@@ -97,13 +97,17 @@ labos recent [-n N]
 labos recent [-n N] --json
 labos export [PATH]
 labos setup get|history
-labos setup set --json JSON
+labos setup set --json JSON [--base-event-id ID]
 labos capture [TEXT...] [--kind note|measurement] [--at ISO] [--tag TAG]
 labos log YYYY-MM-DD [--session-id ID] [--tag TAG] [--search TEXT] [--offset N] [--limit N]
 labos revise EVENT_ID --changes-json JSON
 labos tag list|set|retag ...
 labos markdown YYYY-MM-DD PATH
 labos sync-log PATH [--apply] [--remove-id EVENT_ID]
+labos sync-entries PATH [--apply]  # PATH JSON has entries; --apply also needs the reviewed expected baseline
+labos asset rename OLD_PATH NEW_PATH
+labos asset-map
+labos log-id YYYY-MM-DD
 labos device add --fingerprint ID --alias NAME [--kind KIND]
 labos device list
 labos device show TARGET
@@ -117,6 +121,9 @@ labos device power approve TARGET --name NAME --rails-json JSON [--evidence REF 
 labos device power edit TARGET PROFILE_ID --name NAME --rails-json JSON [--evidence REF ...] [--notes TEXT]
 labos sessions
 labos compare LEFT_SESSION_ID RIGHT_SESSION_ID [--json]
+labos record [--session-id ID] [--json] [--output PATH]
+labos doctor [--json] [--provider ...]
+labos report [--mode factual|reviewed|rigorous] [--output-dir PATH]
 ```
 
 Use `labos sessions` to find session IDs, then compare their recorded Git snapshots, latest explicit setups, resource membership, checkpoints, measurements, and artifact references. Markdown is printed by default; `--json` emits deterministic versioned data. A `same` result means the recorded values match, while `unrecorded` means there is not enough evidence to compare. Historical checkpoint Git snapshots captured in another session are not treated as occurrence-time snapshots. Measurements remain separate evidence entries and are not paired or aggregated; artifact paths and optional hashes are reported without reading files. Differences do not establish cause.
@@ -147,7 +154,7 @@ Build/install instructions live in [`obsidian/README.md`](obsidian/README.md). T
 
 ## Explicit non-goals for Phase 0
 
-No FastAPI or standalone web app, SQLite, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or autonomous/background Dreams. AI remains explicit and optional: deterministic Session Records and factual reports require no model.
+No FastAPI or standalone web app, vector database, embeddings, knowledge graph, ontology, automatic instrument integration, computer vision, experiment-start detection, multi-user architecture, or autonomous/background Dreams. SQLite is the authoritative operational store (WAL mode, foreign keys, transactional session state), while AI remains explicit and optional: deterministic Session Records and factual reports require no model.
 
 Those features must earn their place from observed failures in real use.
 

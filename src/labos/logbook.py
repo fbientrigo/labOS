@@ -57,6 +57,8 @@ def list_sessions(home: Path) -> list[dict[str, Any]]:
         sid = event.get("session_id")
         if event["type"] == "session_start" and sid:
             sessions[sid] = {"session_id": sid, "project": event.get("project"),
+                             "label": (event.get("payload") or {}).get("label"),
+                             "cwd": event.get("cwd"),
                              "started_at": event["timestamp"], "ended_at": None}
         elif event["type"] == "session_end" and sid in sessions:
             sessions[sid]["ended_at"] = event["timestamp"]
@@ -71,13 +73,43 @@ def validate_setup(setup: dict[str, Any]) -> None:
     if len(ids) != len(devices) or any(not value for value in ids) or len(ids) != len(set(ids)):
         raise ValueError("every setup device needs a unique resource_id or id")
     id_set = set(ids)
+    schema = setup.get("setup_schema")
+    if schema is not None and (type(schema) is not int or schema < 1):
+        raise ValueError("setup_schema must be a positive integer")
+    # Port descriptors are optional (legacy snapshots have none). When present they are the
+    # snapshot's own copy of the device ports, so connections never depend on current device knowledge.
+    port_labels: dict[str, dict[str, str]] = {}
+    for rid, device in zip(ids, devices):
+        raw_ports = device.get("ports", [])
+        if not isinstance(raw_ports, list):
+            raise ValueError("device ports must be a list")
+        labels: dict[str, str] = {}
+        seen_labels: set[str] = set()
+        for port in raw_ports:
+            if not isinstance(port, dict) or not all(isinstance(port.get(key), str) and port[key].strip() for key in ("port_id", "label")):
+                raise ValueError("every device port needs a port_id and label")
+            if port["port_id"] in labels or port["label"].strip().casefold() in seen_labels:
+                raise ValueError("device port ids and labels must be unique")
+            labels[port["port_id"]] = port["label"]
+            seen_labels.add(port["label"].strip().casefold())
+        port_labels[rid] = labels
     for connection in setup.get("connections", []):
         if not isinstance(connection, dict) or str(connection.get("from", "")) not in id_set or str(connection.get("to", "")) not in id_set:
             raise ValueError("every connection endpoint must refer to a setup device")
-        if connection.get("from") == connection.get("to"):
-            raise ValueError("a device cannot connect to itself")
         if any(not isinstance(connection.get(key, ""), str) for key in ("from_port", "to_port")):
             raise ValueError("connection endpoint labels must be text")
+        port_ids = {side: connection.get(side + "_port_id") for side in ("from", "to")}
+        for side, port_id in port_ids.items():
+            if port_id is None:
+                continue
+            labels = port_labels[str(connection[side])]
+            if not isinstance(port_id, str) or port_id not in labels:
+                raise ValueError("connection port_id must refer to a port of that setup device")
+            if connection.get(side + "_port", labels[port_id]) != labels[port_id]:
+                raise ValueError("connection port label must match the snapshot port descriptor")
+        if connection.get("from") == connection.get("to"):
+            if port_ids["from"] is None or port_ids["to"] is None or port_ids["from"] == port_ids["to"]:
+                raise ValueError("a device cannot connect to itself")
     for device in devices:
         if not all(isinstance(device.get(field), str) and device[field].strip() for field in ("fingerprint", "alias", "kind")):
             raise ValueError("setup devices require identity fingerprint, alias, and kind")
@@ -89,7 +121,12 @@ def validate_setup(setup: dict[str, Any]) -> None:
                 raise ValueError("device layout coordinates must be finite numbers")
 
 
-def save_setup(home: Path, setup: dict[str, Any]) -> dict[str, Any]:
+def save_setup(home: Path, setup: dict[str, Any], base_event_id: str | None = None) -> dict[str, Any]:
+    """Append one complete setup snapshot.
+
+    base_event_id guards against committing a draft built on a superseded setup: it must equal the
+    latest setup_snapshot event id ("" means no snapshot exists yet). None skips the check.
+    """
     validate_setup(setup)
     devices = setup["devices"]
     session = _active_session_db
@@ -97,6 +134,11 @@ def save_setup(home: Path, setup: dict[str, Any]) -> dict[str, Any]:
         active = session(db)
         if active is None:
             raise RuntimeError("Setup changes require an active session.")
+        if base_event_id is not None:
+            row = db.execute("SELECT id FROM events WHERE type='setup_snapshot' ORDER BY sequence DESC LIMIT 1").fetchone()
+            latest = row["id"] if row else ""
+            if latest != base_event_id:
+                raise RuntimeError("The recorded setup changed since this draft was started. Discard the draft and retry.")
         current_resources: dict[str, dict[str, Any]] = {}
         for item in db.execute("SELECT type,payload_json,session_id FROM events WHERE session_id=? ORDER BY sequence", (active["session_id"],)):
             kind = item["type"]
@@ -233,6 +275,95 @@ def revise(home: Path, entry_id: str, changes: dict[str, Any]) -> dict[str, Any]
         home, "entry_revision", {"entry_id": entry_id, "changes": changes}, session=None)
 
 
+def _link_key(links: Any, renames: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+    return [(str(item.get("title", "")), _resolve_asset(str(item.get("path", "")), renames or {}), str(item.get("kind", "")))
+            for item in (links or []) if isinstance(item, dict)]
+
+
+def sync_entries(home: Path, entries: list[dict[str, Any]], *, apply: bool = False,
+                 expected_current: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Fold edits made in a connected Markdown note back into evidence as revisions.
+
+    Each entry is {id, text, links}. A preview returns the current state for changed entries in
+    ``expected``. Applying changes requires that reviewed baseline and checks the whole batch inside
+    one transaction; missing or stale baselines never overwrite newer edits. Unknown or removed ids
+    are reported and never created. Raw events are untouched.
+    """
+    events = read_events(home)
+    originals = {event["id"]: event for event in events if event["type"] in {"note", "checkpoint", "artifact"}}
+    effective: dict[str, dict[str, Any]] = {key: dict(event["payload"]) for key, event in originals.items()}
+    for event in events:
+        if event["type"] == "entry_revision":
+            target = event["payload"].get("entry_id", "")
+            if target in effective:
+                effective[target].update(event["payload"].get("changes", {}))
+    renames = asset_renames(home)  # a moved note is the same note: compare links by their current path
+    result: dict[str, Any] = {"changed": [], "unchanged": [], "unknown": [], "events": [],
+                              "conflicts": [], "expected": {}, "changed_details": []}
+    updates: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for entry in entries:
+        entry_id = str(entry.get("id", ""))
+        current = effective.get(entry_id)
+        if current is None or current.get("removed"):
+            result["unknown"].append(entry_id)
+            continue
+        changes: dict[str, Any] = {}
+        text = str(entry.get("text", "")).strip()
+        if text != str(current.get("text", "")).strip():
+            changes["text"] = text
+        if "links" in entry and _link_key(entry["links"], renames) != _link_key(current.get("links"), renames):
+            changes["links"] = entry["links"]
+        if not changes:
+            result["unchanged"].append(entry_id)
+            continue
+        result["changed"].append(entry_id)
+        baseline = {"text": current.get("text", ""), "links": current.get("links", [])}
+        result["expected"][entry_id] = baseline
+        result["changed_details"].append({"entry_id": entry_id, "before": baseline,
+                                          "after": {**baseline, **changes}})
+        updates.append((entry_id, changes, baseline))
+    if apply and (updates or expected_current):
+        # A preview is the user's review point. Verify its exact baseline while holding the
+        # write transaction, so a concurrent correction rejects the entire batch.
+        if expected_current is None:
+            result["status"] = "review_required"
+            return result
+        with _transaction(home) as db:
+            rows = db.execute("SELECT id,type,payload_json FROM events ORDER BY sequence").fetchall()
+            db_effective: dict[str, dict[str, Any]] = {
+                row["id"]: json.loads(row["payload_json"])
+                for row in rows if row["type"] in {"note", "checkpoint", "artifact"}}
+            for row in rows:
+                if row["type"] == "entry_revision":
+                    revision = json.loads(row["payload_json"])
+                    if revision.get("entry_id") in db_effective:
+                        db_effective[revision["entry_id"]].update(revision.get("changes", {}))
+            conflicts = []
+            reviewed_ids = set(expected_current) | {entry_id for entry_id, _changes, _baseline in updates}
+            for entry_id in sorted(reviewed_ids):
+                expected = expected_current.get(entry_id)
+                actual = db_effective.get(entry_id)
+                if (expected is None or actual is None or actual.get("removed")
+                        or expected.get("text") != actual.get("text", "")
+                        or _link_key(expected.get("links"), renames) != _link_key(actual.get("links"), renames)):
+                    conflicts.append({"entry_id": entry_id, "expected": expected,
+                                      "current": {"text": actual.get("text", ""), "links": actual.get("links", [])} if actual else None})
+            if conflicts:
+                result["conflicts"] = conflicts
+                result["events"] = []
+                result["status"] = "conflict"
+                return result
+            for entry_id, changes, _baseline in updates:
+                result["events"].append(_append_event_db(
+                    db, "entry_revision", {"entry_id": entry_id, "changes": changes}, session=None))
+        result["status"] = "updated" if updates else "no_op"
+    elif apply:
+        result["status"] = "no_op"
+    else:
+        result["status"] = "preview"
+    return result
+
+
 def set_tag(home: Path, day: str, name: str, color: str) -> dict[str, Any]:
     if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
         raise ValueError("tag color must be a six-digit HEX color")
@@ -315,8 +446,8 @@ def daily_log_id(home: Path, day: str) -> str:
     return value
 
 
-def bulk_retag(home: Path, *, day: str, old_tag: str, new_tag: str) -> list[dict[str, Any]]:
-    entries = effective_entries(home, day=day, tag=old_tag, limit=1000000)
+def bulk_retag(home: Path, *, day: str, old_tag: str, new_tag: str, query: str | None = None, session_id: str | None = None) -> list[dict[str, Any]]:
+    entries = effective_entries(home, day=day, tag=old_tag, query=query, session_id=session_id, limit=1000000)
     with _transaction(home) as db:
         return [_append_event_db(db, "entry_revision", {"entry_id": entry["id"], "changes": {"tag": new_tag}})
                 for entry in entries]
@@ -343,6 +474,10 @@ def render_daily_markdown(home: Path, day: str) -> str:
         eid = entry["id"]
         lines.extend([f"<!-- labos-entry:{eid} -->", f"### {p.get('occurred_at') or entry['timestamp']} · {entry['type']}",
                       f"<!-- event-id:{eid} -->"])
+        if entry["type"] == "checkpoint":
+            state = str(p.get("state") or "").upper()
+            if state:
+                lines.append(f"Checkpoint: {state}")
         if p.get("tag"):
             lines.append(f"Tag: {p['tag']}")
         if p.get("text"):
@@ -463,6 +598,8 @@ def _markdown_changes(block: str, original: dict[str, Any] | None = None) -> dic
         if line.startswith("Tag: "):
             changes["tag"] = line[5:].strip() or None
             continue
+        if original and original.get("type") == "checkpoint" and re.fullmatch(r"(?:Checkpoint|State):\s*(?:WORKING|BROKEN)", line.strip(), re.I):
+            continue
         link_match = re.fullmatch(r"(!)?\[\[([^\]]+)\]\]", line.strip())
         if link_match:
             target = link_match.group(2)
@@ -479,7 +616,10 @@ def _markdown_changes(block: str, original: dict[str, Any] | None = None) -> dic
                 continue
         content.append(line)
     text = "\n".join(content).strip()
-    changes["text"] = text
+    if original and original.get("payload", {}).get("text") is None and not text:
+        changes["text"] = None
+    else:
+        changes["text"] = text
     changes.setdefault("tag", None)
     changes["links"] = links
     return changes

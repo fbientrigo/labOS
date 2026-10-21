@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -9,11 +10,14 @@ from .agents import SUPPORTED_PROVIDERS
 from .comparison import build_comparison, render_comparison_markdown
 from .doctor import doctor_text, run_doctor
 from .knowledge import (
+    add_port,
     approve_fact,
     approve_power_profile,
     device_knowledge,
     edit_fact,
+    edit_port,
     edit_power_profile,
+    remove_port,
 )
 from .ledger import (
     active_session,
@@ -26,7 +30,7 @@ from .ledger import (
     recent_events,
     start_session,
 )
-from .logbook import (asset_renames, bulk_retag, capture, current_setup, daily_log_id, effective_entries, list_sessions,
+from .logbook import (asset_renames, bulk_retag, capture, current_setup, daily_log_id, effective_entries, list_sessions, sync_entries,
                       record_asset_rename, revise, save_setup, set_tag, setup_history,
                       tags_for_day, update_markdown_log, write_daily_markdown)
 from .resources import (
@@ -159,6 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     setup_sub.add_parser("history")
     setup_set = setup_sub.add_parser("set")
     setup_set.add_argument("--json", required=True, dest="setup_json")
+    setup_set.add_argument("--base-event-id", default=None,
+                           help="Refuse unless this is the latest setup snapshot id (empty string: none yet).")
 
     capture_parser = sub.add_parser("capture", help="Capture a dated observation or measurement.")
     capture_parser.add_argument("text", nargs="*", default=[])
@@ -199,6 +205,8 @@ def build_parser() -> argparse.ArgumentParser:
     tag_move.add_argument("day")
     tag_move.add_argument("old_tag")
     tag_move.add_argument("new_tag")
+    tag_move.add_argument("--search", "--query", dest="query", default=None)
+    tag_move.add_argument("--session", "--session-id", dest="session_id", default=None)
 
     markdown = sub.add_parser("markdown", help="Update a dated Markdown log in a vault.")
     markdown.add_argument("day")
@@ -214,6 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
     sync_log.add_argument("path", type=Path)
     sync_log.add_argument("--apply", action="store_true")
     sync_log.add_argument("--remove-id", action="append", default=[])
+
+    sync_entries_cmd = sub.add_parser("sync-entries", help="Fold edits from a connected note into append-only revisions.")
+    sync_entries_cmd.add_argument("json_file", type=Path, help="JSON list of {id, text, links}.")
+    sync_entries_cmd.add_argument("--apply", action="store_true")
 
     log_id = sub.add_parser("log-id", help="Read the stable identifier for a daily log.")
     log_id.add_argument("day")
@@ -305,6 +317,22 @@ def build_parser() -> argparse.ArgumentParser:
     power_edit.add_argument("--evidence", action="append", default=[])
     power_edit.add_argument("--notes")
 
+    device_port = device_sub.add_parser("port", help="Manage device interface/port definitions.")
+    device_port_sub = device_port.add_subparsers(dest="port_command", required=True)
+    for port_name, port_help in (("add", "Define a port."), ("edit", "Edit a port definition.")):
+        port_parser = device_port_sub.add_parser(port_name, help=port_help)
+        port_parser.add_argument("target", help="Alias, fingerprint, or resource ID.")
+        if port_name == "edit":
+            port_parser.add_argument("port_id")
+        port_parser.add_argument("--label", required=True)
+        port_parser.add_argument("--kind", default="other")
+        port_parser.add_argument("--direction", default="unknown")
+        port_parser.add_argument("--connector")
+        port_parser.add_argument("--notes")
+    port_remove = device_port_sub.add_parser("remove", help="Forget a port definition.")
+    port_remove.add_argument("target", help="Alias, fingerprint, or resource ID.")
+    port_remove.add_argument("port_id")
+
     record = sub.add_parser(
         "record",
         help="Build the deterministic Session Record for active/latest work.",
@@ -349,6 +377,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
     parser = build_parser()
     args = parser.parse_args(argv)
     home = _home(args)
@@ -402,7 +435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(json.dumps(setup_history(home), ensure_ascii=False))
             else:
                 value = json.loads(args.setup_json)
-                print(json.dumps(save_setup(home, value), ensure_ascii=False))
+                print(json.dumps(save_setup(home, value, args.base_event_id), ensure_ascii=False))
         elif args.command == "capture":
             try:
                 links = json.loads(args.links_json)
@@ -434,7 +467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.tag_command == "set":
                 print(json.dumps(set_tag(home, args.day, args.name, args.color), ensure_ascii=False))
             else:
-                print(json.dumps(bulk_retag(home, day=args.day, old_tag=args.old_tag, new_tag=args.new_tag), ensure_ascii=False))
+                print(json.dumps(bulk_retag(home, day=args.day, old_tag=args.old_tag, new_tag=args.new_tag, query=args.query, session_id=args.session_id), ensure_ascii=False))
         elif args.command == "markdown":
             print(write_daily_markdown(home, args.day, args.path))
         elif args.command == "log-id":
@@ -443,6 +476,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(asset_renames(home), ensure_ascii=False))
         elif args.command == "asset":
             print(json.dumps(record_asset_rename(home, args.old_path, args.new_path), ensure_ascii=False))
+        elif args.command == "sync-entries":
+            entries = json.loads(args.json_file.read_text(encoding="utf-8"))
+            expected = None
+            if isinstance(entries, dict):
+                expected = entries.get("expected")
+                entries = entries.get("entries", [])
+            if not isinstance(entries, list):
+                raise ValueError("entries file must contain a JSON list or sync review object")
+            print(json.dumps(sync_entries(home, entries, apply=args.apply, expected_current=expected), ensure_ascii=False))
         elif args.command == "sync-log":
             print(json.dumps(update_markdown_log(home, args.path, apply=args.apply, remove_ids=set(args.remove_id)), ensure_ascii=False))
         elif args.command == "device":
@@ -507,6 +549,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     parser.error(f"unknown fact command: {args.fact_command}")
+                print(json.dumps(result, sort_keys=True))
+            elif args.device_command == "port":
+                if args.port_command == "add":
+                    result = add_port(home, args.target, label=args.label, kind=args.kind,
+                                      direction=args.direction, connector=args.connector, notes=args.notes)
+                elif args.port_command == "edit":
+                    result = edit_port(home, args.target, args.port_id, label=args.label, kind=args.kind,
+                                       direction=args.direction, connector=args.connector, notes=args.notes)
+                else:
+                    result = remove_port(home, args.target, args.port_id)
                 print(json.dumps(result, sort_keys=True))
             elif args.device_command == "power":
                 rails = _rails_json(args.rails_json)

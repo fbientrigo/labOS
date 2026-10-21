@@ -6,7 +6,8 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "esbuild src/setup_draft.test.ts src/shorthand.test.ts src/session_note.test.ts src/fingerprint.test.ts src/scoped_drafts.test.ts --bundle --platform=node --format=esm --outdir=.test-roi --out-extension:.js=.mjs --log-level=warning && node --test .test-roi/setup_draft.test.mjs .test-roi/shorthand.test.mjs .test-roi/session_note.test.mjs .test-roi/fingerprint.test.mjs .test-roi/scoped_drafts.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

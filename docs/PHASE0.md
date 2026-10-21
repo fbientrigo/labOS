@@ -58,7 +58,7 @@ Reduce LabOS to scripts or stop the project if any of these becomes normal:
 ## Deferred until evidence justifies it
 
 - web UI / FastAPI;
-- SQLite + FTS5;
+- full-text search extensions (SQLite FTS5);
 - semantic embeddings;
 - Dreams / agent consolidation;
 - stable facts and proposals;

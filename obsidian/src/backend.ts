@@ -10,11 +10,15 @@ import type {
   CheckpointState,
   DeviceKind,
   DeviceKnowledge,
+  DevicePort,
+  DevicePortInput,
   DeviceResource,
   DoctorResult,
   LabOSBackend,
   LabOSEvent,
   LabOSSettings,
+  NoteSyncEntry,
+  NoteSyncResult,
   ReportProgress,
   ReportResult,
   PowerProfile,
@@ -53,7 +57,11 @@ export class CliLabOSBackend implements LabOSBackend {
   }
 
   private childEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
+    };
     const models: Array<[string, string]> = [
       ["LABOS_AGY_MODEL", this.settings.agyModel],
       ["LABOS_CODEX_MODEL", this.settings.codexModel],
@@ -135,8 +143,11 @@ export class CliLabOSBackend implements LabOSBackend {
     return JSON.parse(await this.run(state === "working" ? "good" : "bad", args)) as LabOSEvent;
   }
 
-  async attach(path: string, kind: "artifact" | "photo"): Promise<void> {
-    await this.run("attach", [path, "--kind", kind]);
+  async attach(path: string, kind: "artifact" | "photo", options: { hash?: boolean; note?: string } = {}): Promise<void> {
+    const args = [path, "--kind", kind];
+    if (options.hash) args.push("--hash");
+    if (options.note) args.push("--note", options.note);
+    await this.run("attach", args);
   }
 
   async end(text?: string): Promise<void> {
@@ -289,6 +300,25 @@ export class CliLabOSBackend implements LabOSBackend {
       args.push("--notes", input.notes);
     }
     return JSON.parse(await this.run("device", args)) as ApprovedFact;
+  }
+
+  private portArgs(input: DevicePortInput): string[] {
+    const args = ["--label", input.label, "--kind", input.kind, "--direction", input.direction];
+    if (input.connector) args.push("--connector", input.connector);
+    if (input.notes) args.push("--notes", input.notes);
+    return args;
+  }
+
+  async addDevicePort(target: string, input: DevicePortInput): Promise<DevicePort> {
+    return JSON.parse(await this.run("device", ["port", "add", target, ...this.portArgs(input)])) as DevicePort;
+  }
+
+  async editDevicePort(target: string, portId: string, input: DevicePortInput): Promise<DevicePort> {
+    return JSON.parse(await this.run("device", ["port", "edit", target, portId, ...this.portArgs(input)])) as DevicePort;
+  }
+
+  async removeDevicePort(target: string, portId: string): Promise<void> {
+    await this.run("device", ["port", "remove", target, portId]);
   }
 
   async approvePowerProfile(
@@ -483,8 +513,10 @@ export class CliLabOSBackend implements LabOSBackend {
     return JSON.parse(await this.run("setup", ["get"])) as SetupSnapshot;
   }
 
-  async saveSetup(value: SetupSnapshot): Promise<void> {
-    await this.run("setup", ["set", "--json", JSON.stringify(value)]);
+  async saveSetup(value: SetupSnapshot, baseEventId?: string): Promise<void> {
+    const args = ["set", "--json", JSON.stringify(value)];
+    if (baseEventId !== undefined) args.push("--base-event-id", baseEventId);
+    await this.run("setup", args);
   }
 
   async capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent> {
@@ -526,8 +558,11 @@ export class CliLabOSBackend implements LabOSBackend {
     await this.run("tag", ["set", day, name, color]);
   }
 
-  async retag(day: string, oldTag: string, newTag: string): Promise<void> {
-    await this.run("tag", ["retag", day, oldTag, newTag]);
+  async retag(day: string, oldTag: string, newTag: string, options?: { search?: string; sessionId?: string }): Promise<void> {
+    const args = ["retag", day, oldTag, newTag];
+    if (options?.search) args.push("--search", options.search);
+    if (options?.sessionId) args.push("--session", options.sessionId);
+    await this.run("tag", args);
   }
 
   async setupHistory(): Promise<SetupHistoryItem[]> {
@@ -547,6 +582,19 @@ export class CliLabOSBackend implements LabOSBackend {
 
   async writeDailyLog(day: string, path: string): Promise<void> {
     await this.run("markdown", [day, path]);
+  }
+
+  async syncEntries(entries: NoteSyncEntry[], apply = false, expected?: NoteSyncResult["expected"]): Promise<NoteSyncResult> {
+    // Entries can be large; pass them in a temp file, not argv.
+    const file = join(tmpdir(), "labos-sync-" + randomUUID() + ".json");
+    await writeFile(file, JSON.stringify(expected ? { entries, expected } : entries), "utf-8");
+    try {
+      const args = [file];
+      if (apply) args.push("--apply");
+      return JSON.parse(await this.run("sync-entries", args)) as NoteSyncResult;
+    } finally {
+      await unlink(file).catch(() => undefined);
+    }
   }
 
   async dailyLogId(day: string): Promise<string> {

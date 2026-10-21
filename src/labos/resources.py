@@ -198,6 +198,29 @@ def _session_active_resources(
     return active
 
 
+def _find_current_session_device_card(db: Any, resource_id: str, session_id: str) -> dict[str, Any] | None:
+    for row in db.execute(
+        "SELECT payload_json FROM events WHERE type='setup_snapshot' AND session_id=? ORDER BY sequence DESC",
+        (session_id,),
+    ):
+        try:
+            setup = json.loads(row["payload_json"]).get("setup", {})
+            for dev in setup.get("devices", []):
+                if str(dev.get("resource_id") or dev.get("id")) == resource_id:
+                    return dict(dev)
+        except Exception:
+            continue
+    return None
+
+
+def _current_session_setup(db: Any, session_id: str) -> dict[str, Any]:
+    row = db.execute(
+        "SELECT payload_json FROM events WHERE type='setup_snapshot' AND session_id=? ORDER BY sequence DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return json.loads(row["payload_json"]).get("setup", {"devices": [], "connections": []}) if row else {"devices": [], "connections": []}
+
+
 def use_resource(home: Path, target: str) -> dict[str, Any]:
     home = ensure_home(home)
     with ledger_lock(home):
@@ -210,7 +233,33 @@ def use_resource(home: Path, target: str) -> dict[str, Any]:
             active = _session_active_resources(events, str(session["session_id"]))
             if resource["resource_id"] in active:
                 raise RuntimeError(f"Device is already active: {resource['alias']}")
-            return _append_event_db(db, "resource_add", _snapshot(resource), session=session)
+            event = _append_event_db(db, "resource_add", _snapshot(resource), session=session)
+
+            latest_setup = _current_session_setup(db, str(session["session_id"]))
+
+            current_devices = list(latest_setup.get("devices", []))
+            rid = str(resource["resource_id"])
+            if not any(str(d.get("resource_id") or d.get("id")) == rid for d in current_devices):
+                prior = _find_current_session_device_card(db, rid, str(session["session_id"]))
+                card = dict(prior) if prior else {
+                    "x": 16 + len(current_devices) * 150,
+                    "y": 16,
+                }
+                card.update({
+                    "resource_id": rid,
+                    "fingerprint": resource["fingerprint"],
+                    "alias": resource["alias"],
+                    "kind": resource["kind"],
+                    "activation": "unknown",
+                })
+                current_devices.append(card)
+
+            new_setup = {**latest_setup, "devices": current_devices, "connections": list(latest_setup.get("connections", []))}
+
+            from .logbook import validate_setup
+            validate_setup(new_setup)
+            _append_event_db(db, "setup_snapshot", {"setup": new_setup}, session=session)
+            return event
 
 
 def remove_resource(home: Path, target: str) -> dict[str, Any]:
@@ -225,7 +274,22 @@ def remove_resource(home: Path, target: str) -> dict[str, Any]:
             active = _session_active_resources(events, str(session["session_id"]))
             if resource["resource_id"] not in active:
                 raise RuntimeError(f"Device is not active: {resource['alias']}")
-            return _append_event_db(db, "resource_remove", _snapshot(resource), session=session)
+            event = _append_event_db(db, "resource_remove", _snapshot(resource), session=session)
+
+            latest_setup = _current_session_setup(db, str(session["session_id"]))
+
+            rid = str(resource["resource_id"])
+            current_devices = latest_setup.get("devices", [])
+            current_connections = latest_setup.get("connections", [])
+            new_devices = [d for d in current_devices if str(d.get("resource_id") or d.get("id")) != rid]
+            new_connections = [c for c in current_connections if str(c.get("from")) != rid and str(c.get("to")) != rid]
+
+            new_setup = {**latest_setup, "devices": new_devices, "connections": new_connections}
+
+            from .logbook import validate_setup
+            validate_setup(new_setup)
+            _append_event_db(db, "setup_snapshot", {"setup": new_setup}, session=session)
+            return event
 
 
 def resource_context_timeline(

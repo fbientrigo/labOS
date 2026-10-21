@@ -12,7 +12,7 @@ export type ReportStatus =
 export type DeviceKind = string;
 export interface SetupSnapshot { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>>; }
 export interface SetupHistoryItem { event_id: string; timestamp: string; session_id: string | null; setup: SetupSnapshot; }
-export interface SessionChoice { session_id: string; project: string | null; started_at: string; ended_at: string | null; }
+export interface SessionChoice { session_id: string; project: string | null; label?: string | null; cwd?: string | null; started_at: string; ended_at: string | null; }
 
 export interface DeviceResource {
   resource_id: string;
@@ -51,11 +51,33 @@ export interface PowerProfile {
   notes?: string | null;
 }
 
+export const PORT_KINDS = ["power", "network", "digital", "analog", "serial", "debug", "rf", "other"] as const;
+export const PORT_DIRECTIONS = ["input", "output", "bidirectional", "unknown"] as const;
+
+export interface DevicePort {
+  port_id: string;
+  label: string;
+  kind: string;
+  direction: string;
+  connector?: string | null;
+  notes?: string | null;
+  approved_at?: string;
+}
+
+export interface DevicePortInput {
+  label: string;
+  kind: string;
+  direction: string;
+  connector?: string;
+  notes?: string;
+}
+
 export interface DeviceKnowledge {
   knowledge_version: number;
   resource_id: string;
   approved_facts: ApprovedFact[];
   power_profiles: PowerProfile[];
+  ports?: DevicePort[];
 }
 
 export interface ResourceSnapshot {
@@ -80,6 +102,25 @@ export interface LabOSSettings {
   agyModel: string;
   codexModel: string;
   claudeModel: string;
+  deviceColors: Record<string, string>;
+  notesFolder: string;
+  autoWriteDailyLog: boolean;
+  copyQuickToNote: boolean;
+  indexOnStartup: boolean;
+  indexOnCreate: boolean;
+  indexOnRename: boolean;
+  indexOnDelete: boolean;
+  noteIndex: Record<string, string>;
+  fingerprintFiles: string;
+}
+
+export interface NoteSyncEntry { id: string; text: string; links: Array<{ title: string; path?: string; kind?: string }>; }
+export interface NoteSyncResult {
+  changed: string[]; unchanged: string[]; unknown: string[]; events: unknown[];
+  expected: Record<string, { text: string; links: Array<{ title: string; path?: string; kind?: string }> }>;
+  changed_details: Array<{ entry_id: string; before: { text: string; links: Array<{ title: string; path?: string; kind?: string }> }; after: { text: string; links?: Array<{ title: string; path?: string; kind?: string }> } }>;
+  conflicts: Array<{ entry_id: string; expected?: unknown; current?: unknown }>;
+  status: string;
 }
 
 export interface SessionState {
@@ -200,23 +241,24 @@ export interface LabOSBackend {
   start(project: string, label?: string, workdir?: string, setup?: SetupSnapshot): Promise<void>;
   note(text: string): Promise<void>;
   checkpoint(state: CheckpointState, text?: string, options?: { tag?: string; occurredAt?: string; links?: Array<{ title: string; path?: string; kind?: string }>; setup?: SetupSnapshot; sessionId?: string }): Promise<LabOSEvent>;
-  attach(path: string, kind: "artifact" | "photo"): Promise<void>;
+  attach(path: string, kind: "artifact" | "photo", options?: { hash?: boolean; note?: string }): Promise<void>;
   end(text?: string): Promise<void>;
   recent(limit: number): Promise<LabOSEvent[]>;
   setup(): Promise<SetupSnapshot>;
-  saveSetup(value: SetupSnapshot): Promise<void>;
+  saveSetup(value: SetupSnapshot, baseEventId?: string): Promise<void>;
   capture(input: { text: string; kind?: "note" | "measurement"; tag?: string; occurredAt?: string; target?: string; current?: number; unit?: "A" | "mA"; voltage?: number; links?: Array<{ title: string; path?: string; kind?: string }>; sessionId?: string; setup?: SetupSnapshot }): Promise<LabOSEvent>;
   day(day: string, options?: { sessionId?: string; tag?: string; search?: string; offset?: number; limit?: number }): Promise<LabOSEvent[]>;
   revise(entryId: string, changes: Record<string, unknown>): Promise<void>;
   assetRename(oldPath: string, newPath: string): Promise<void>;
   tags(day: string): Promise<Array<{ name: string; color: string }>>;
   setTag(day: string, name: string, color: string): Promise<void>;
-  retag(day: string, oldTag: string, newTag: string): Promise<void>;
+  retag(day: string, oldTag: string, newTag: string, options?: { search?: string; sessionId?: string }): Promise<void>;
   setupHistory(): Promise<SetupHistoryItem[]>;
   sessions(): Promise<SessionChoice[]>;
   syncMarkdown(path: string, apply?: boolean, removeIds?: string[]): Promise<{ status: string; changed: string[]; changed_details?: Array<{ entry_id: string; changes: Record<string, { before: unknown; after: unknown }> }>; new: Array<Record<string, unknown>>; removed: string[]; events: string[]; text_diff?: string }>;
   writeDailyLog(day: string, path: string): Promise<void>;
   dailyLogId(day: string): Promise<string>;
+  syncEntries(entries: NoteSyncEntry[], apply?: boolean, expected?: NoteSyncResult["expected"]): Promise<NoteSyncResult>;
   assetMap(): Promise<Record<string, string>>;
   record(sessionId?: string): Promise<SessionRecordResult>;
   devices(): Promise<DeviceResource[]>;
@@ -270,6 +312,9 @@ export interface LabOSBackend {
       notes?: string;
     },
   ): Promise<PowerProfile>;
+  addDevicePort(target: string, input: DevicePortInput): Promise<DevicePort>;
+  editDevicePort(target: string, portId: string, input: DevicePortInput): Promise<DevicePort>;
+  removeDevicePort(target: string, portId: string): Promise<void>;
   doctor(providers?: AgentProvider[]): Promise<DoctorResult>;
   startReport(
     outputDir: string,
