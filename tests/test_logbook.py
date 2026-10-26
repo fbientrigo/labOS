@@ -635,6 +635,25 @@ def test_sync_entries_revises_only_changed_entries_and_never_creates(tmp_path: P
     assert raw["payload"]["text"] == ""
 
 
+def test_sync_entries_rejects_duplicate_ids_before_appending_revisions(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    entry = capture(home, kind="note", text="original")
+    before = len(read_events(home))
+    duplicate = [
+        {"id": entry["id"], "text": "first edit", "links": []},
+        {"id": entry["id"], "text": "second edit", "links": []},
+    ]
+
+    with pytest.raises(ValueError, match="duplicate IDs"):
+        sync_entries(home, duplicate, apply=True, expected_current={
+            entry["id"]: {"text": "original", "links": []},
+        })
+
+    events = read_events(home)
+    assert len(events) == before
+    assert not any(event["type"] == "entry_revision" for event in events)
+
+
 def test_sync_entries_skips_removed_entries(tmp_path: Path) -> None:
     home = tmp_path / "home"
     entry = capture(home, kind="note", text="gone")

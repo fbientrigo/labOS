@@ -289,6 +289,9 @@ def sync_entries(home: Path, entries: list[dict[str, Any]], *, apply: bool = Fal
     one transaction; missing or stale baselines never overwrite newer edits. Unknown or removed ids
     are reported and never created. Raw events are untouched.
     """
+    ids = [str(entry.get("id", "")) for entry in entries]
+    if len(ids) != len(set(ids)):
+        raise ValueError("entries contain duplicate IDs; each LabOS event can be synced only once")
     events = read_events(home)
     originals = {event["id"]: event for event in events if event["type"] in {"note", "checkpoint", "artifact"}}
     effective: dict[str, dict[str, Any]] = {key: dict(event["payload"]) for key, event in originals.items()}
