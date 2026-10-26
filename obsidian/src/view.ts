@@ -297,8 +297,10 @@ export class LabOSView extends ItemView {
 
     this.renderHeader(contentEl);
     this.renderNavigation(contentEl);
-    this.renderPendingMarkdown(contentEl);
-    this.renderDoctorStatus(contentEl);
+    // Keep the visual workspace separate from the host/Obsidian chrome.
+    const workspace = contentEl.createDiv({ cls: "labos-workspace-main" });
+    this.renderPendingMarkdown(workspace);
+    this.renderDoctorStatus(workspace);
 
     try {
       const backend = this.plugin.getBackend();
@@ -385,12 +387,12 @@ export class LabOSView extends ItemView {
       }
 
       if (this.page === "today") {
-        this.renderToday(contentEl, session, record, devices, events, setup, tags, colorSuggestions, assetMap, measurementTargets);
+        this.renderToday(workspace, session, record, devices, events, setup, tags, colorSuggestions, assetMap, measurementTargets);
       } else if (this.page === "setup") {
-        this.setupPanel.render(contentEl, session !== null, devices, setup, history.length ? history[history.length - 1]!.event_id : "", knownPorts);
+        this.setupPanel.render(workspace, session !== null, devices, setup, history.length ? history[history.length - 1]!.event_id : "", knownPorts);
       } else if (this.page === "devices") {
         this.renderDevices(
-          contentEl,
+          workspace,
           session,
           record,
           devices,
@@ -398,12 +400,12 @@ export class LabOSView extends ItemView {
           knowledgeError,
         );
       } else {
-        this.renderReports(contentEl, session, record);
+        this.renderReports(workspace, session, record);
       }
     } catch (error) {
       if (generation !== this.refreshGeneration) return;
       const message = error instanceof Error ? error.message : String(error);
-      contentEl.createDiv({ cls: "labos-error", text: message });
+      workspace.createDiv({ cls: "labos-error", text: message });
     }
     if (generation === this.refreshGeneration) contentEl.scrollTop = scrollTop;
   }
@@ -482,7 +484,7 @@ export class LabOSView extends ItemView {
   }
 
   private renderNavigation(container: HTMLElement): void {
-    const nav = container.createDiv({ cls: "labos-nav" });
+    const nav = container.createDiv({ cls: "labos-nav", attr: { "aria-label": "LabOS sections" } });
     for (const [page, label] of [
       ["today", "Logs"],
       ["setup", "Setup"],
@@ -492,6 +494,7 @@ export class LabOSView extends ItemView {
       const button = nav.createEl("button", {
         cls: this.page === page ? "labos-nav-active" : "",
         text: label,
+        attr: { type: "button" },
       });
       if (this.page === page) button.setAttribute("aria-current", "page");
       button.addEventListener("click", () => {
@@ -562,15 +565,25 @@ export class LabOSView extends ItemView {
   ): void {
     this.dayTagColors = new Map(tags.map((item) => [item.name, item.color]));
     this.draftScope = session ? "session:" + session.session_id : "day:" + this.selectedDay;
+
+    const heading = container.createDiv({ cls: "labos-page-heading" });
+    const headingCopy = heading.createDiv();
+    headingCopy.createDiv({ cls: "labos-kicker", text: "01 / EXPERIMENTAL LEDGER" });
+    headingCopy.createEl("h2", { text: "Field notebook" });
+    heading.createSpan({
+      cls: "labos-session-indicator" + (session ? " is-active" : ""),
+      text: session ? "SESSION ACTIVE" : "NO ACTIVE SESSION",
+    });
+
+    // Capture first, inspection second. Both use the existing backend/handlers.
+    const capture = container.createDiv({ cls: "labos-today-workflow" });
     if (session) {
-      this.renderActiveSession(container, session, record, devices, measurementTargets, tags);
+      this.renderActiveSession(capture, session, record, devices, measurementTargets, tags);
     } else {
-      this.renderStart(container, devices, setup);
+      this.renderStart(capture, devices, setup);
     }
-    this.renderNotes(container, session);
-    this.renderDayControls(container, events, tags, colorSuggestions);
     if (!session) {
-      const quick = container.createDiv({ cls: "labos-section labos-stack" });
+      const quick = capture.createDiv({ cls: "labos-section labos-stack labos-quick-capture" });
       quick.createEl("h3", { text: "Quick note" });
       this.renderComposer(quick, tags, {
         placeholder: "Observation (works without a session)",
@@ -578,13 +591,17 @@ export class LabOSView extends ItemView {
         defaultOccurrence: this.defaultOccurrence(this.selectedDay),
       });
     }
-    this.renderTimeline(container, events, session, setup, assetMap);
-    this.renderPager(container, events);
+    this.renderNotes(capture, session);
+
+    const log = container.createDiv({ cls: "labos-log-region" });
+    this.renderDayControls(log, events, tags, colorSuggestions);
+    this.renderTimeline(log, events, session, setup, assetMap);
+    this.renderPager(log, events);
   }
 
   /** One compact row: make or connect a note, sync it, and open the notes of this session. */
   private renderNotes(container: HTMLElement, session: SessionState | null): void {
-    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const section = container.createDiv({ cls: "labos-section labos-stack labos-notes-strip" });
     const row = section.createDiv({ cls: "labos-actions" });
     const notes = this.plugin.notes;
     row.createEl("button", { text: "New session note", attr: { title: "Create today's note in your notes folder and connect it" } })
@@ -633,7 +650,7 @@ export class LabOSView extends ItemView {
     return `${day}T${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   }
   private renderDayControls(container: HTMLElement, entries: LabOSEvent[], tagDefinitions: Array<{ name: string; color: string }>, colorSuggestions: Array<{ name: string; color: string }>): void {
-    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const section = container.createDiv({ cls: "labos-section labos-stack labos-day-controls" });
     const goToDay = (day: string, follows = false): void => {
       this.selectedDay = day;
       this.followsToday = follows;
@@ -686,7 +703,7 @@ export class LabOSView extends ItemView {
   }
 
   private renderStart(container: HTMLElement, devices: DeviceResource[], lastSetup: { devices: Array<Record<string, unknown>>; connections: Array<Record<string, unknown>> }): void {
-    const outer = container.createDiv({ cls: "labos-section labos-stack" });
+    const outer = container.createDiv({ cls: "labos-section labos-stack labos-session-panel" });
     outer.createEl("h3", { text: "Start work" });
     const previous = [...this.sessionChoices].filter((item) => item.project).sort((x, y) => y.started_at.localeCompare(x.started_at))[0];
     if (previous) {
@@ -832,7 +849,7 @@ export class LabOSView extends ItemView {
     measurementTargets: string[],
     tags: Array<{ name: string; color: string }>,
   ): void {
-    const section = container.createDiv({ cls: "labos-section labos-stack" });
+    const section = container.createDiv({ cls: "labos-section labos-stack labos-session-panel" });
 
     const head = section.createDiv({ cls: "labos-session-head" });
     const title = head.createDiv();
@@ -1851,7 +1868,7 @@ export class LabOSView extends ItemView {
     currentSetup: SetupSnapshot,
     assetMap: Record<string, string>,
   ): void {
-    const section = container.createDiv({ cls: "labos-section" });
+    const section = container.createDiv({ cls: "labos-section labos-timeline" });
     section.createEl("h3", { text: this.selectedDay + " · Daily log" });
 
     const visible = events;
