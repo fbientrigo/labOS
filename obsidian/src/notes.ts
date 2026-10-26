@@ -2,7 +2,7 @@ import { Editor, MarkdownView, Modal, Notice, TFile, normalizePath } from "obsid
 
 import type LabOSPlugin from "./main";
 import { NoteIndex } from "./note_index";
-import { entryBlock, entryText, findEmbeds, insertionPrefix, isImagePath, splitEntries } from "./session_note";
+import { duplicateEntryIds, entryBlock, entryText, findEmbeds, hasNoteLinkEvent, insertionPrefix, isImagePath, splitEntries } from "./session_note";
 import type { LabOSEvent, NoteSyncEntry } from "./types";
 
 const ID_KEY = "labos-id";
@@ -54,6 +54,12 @@ export class SessionNotes {
     const already = existing !== null && (!session || this.sessionsOf(file).includes(session.session_id));
     if (already && existing) {
       this.remember("note:" + existing, file.path);
+      const events = await this.plugin.getBackend().recent(1000);
+      if (!hasNoteLinkEvent(events, file.path, session?.session_id)) {
+        const event = await this.plugin.getBackend().capture({ text: "", links: [{ title: file.basename, path: file.path, kind: "note" }] });
+        await this.plugin.writeDailyLogForEvent(event);
+        await this.plugin.refreshViews();
+      }
       return existing;
     }
     let id = existing ?? crypto.randomUUID();
@@ -112,6 +118,11 @@ export class SessionNotes {
     const text = view?.file?.path === file.path ? view.editor.getValue() : await this.app.vault.read(file);
     const entries = splitEntries(text);
     if (!entries.length) { new Notice("No LabOS entries in this note. Use 'New entry' to add one."); return; }
+    const duplicates = duplicateEntryIds(entries);
+    if (duplicates.length) {
+      new Notice("LabOS sync stopped: duplicate entry IDs found (" + duplicates.join(", ") + "). Remove copied callouts or use 'New entry' to create a unique ID.", 10000);
+      return;
+    }
     const hostLink = { title: file.basename, path: file.path, kind: "note" };
     const payload: NoteSyncEntry[] = entries.map((entry) => ({
       id: entry.id,

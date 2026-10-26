@@ -50,6 +50,29 @@ export function splitEntries(text: string): NoteEntry[] {
   });
 }
 
+/** Entry ids must be unique within a note before sync can safely revise events. */
+export function duplicateEntryIds(entries: NoteEntry[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const entry of entries) {
+    if (seen.has(entry.id)) duplicates.add(entry.id);
+    seen.add(entry.id);
+  }
+  return [...duplicates];
+}
+
+/** A prior connection event lets a retry recover after frontmatter was already written. */
+export function hasNoteLinkEvent(
+  events: Array<{ type: string; session_id: string | null; payload: Record<string, unknown> }>,
+  path: string,
+  sessionId?: string | null,
+): boolean {
+  return events.some((event) => event.type === "note" && (sessionId === undefined || event.session_id === sessionId) &&
+    Array.isArray(event.payload.links) && event.payload.links.some((link) =>
+      !!link && typeof link === "object" && (link as { path?: unknown; kind?: unknown }).path === path &&
+      (link as { kind?: unknown }).kind === "note"));
+}
+
 const EMBED_ONLY = /^\s*!\[\[[^\]]+\]\]\s*$/;
 const MARKDOWN_IMAGE_ONLY = /^\s*!\[[^\]]*\]\([^)]+\)(?:\s+"[^"]*")?\s*$/;
 
@@ -74,14 +97,14 @@ export function insertionPrefix(textBeforeCursor: string): string {
 }
 
 const WIKI_EMBED = /!\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g;
-const MD_IMAGE = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const MD_IMAGE = /!\[[^\]]*\]\(\s*(?:<([^>]+)>|((?:\\.|[^\s)])+))(?:\s+"[^"]*")?\s*\)/g;
 
 /** Targets of `![[file]]` and `![alt](file)` embeds, in order, without duplicates. */
 export function findEmbeds(body: string): string[] {
   const seen: string[] = [];
   for (const [pattern, decode] of [[WIKI_EMBED, false], [MD_IMAGE, true]] as const) {
     for (const match of body.matchAll(new RegExp(pattern.source, "g"))) {
-      let target = match[1]!.trim();
+      let target = (match[1] ?? match[2] ?? "").replace(/\\ /g, " ").trim();
       if (decode) {
         if (/^[a-z]+:\/\//i.test(target)) continue;
         try { target = decodeURIComponent(target); } catch { /* keep raw */ }

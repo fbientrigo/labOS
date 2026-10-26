@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approximateTime, entryBlock, entryIdAtLine, entryText, findEmbeds, insertionPrefix, isImagePath, splitEntries } from "./session_note";
+import { approximateTime, duplicateEntryIds, entryBlock, entryIdAtLine, entryText, findEmbeds, hasNoteLinkEvent, insertionPrefix, isImagePath, splitEntries } from "./session_note";
 import { NoteIndex } from "./note_index";
 
 test("time is rounded down to five minutes and zero padded", () => {
@@ -28,6 +28,25 @@ test("embed-only lines leave the text and travel as links", () => {
   assert.equal(entryText("DMA works\n![[scope.png]]\n\nsee [[other note]]\n"), "DMA works\n\nsee [[other note]]");
   assert.equal(entryText("![[only.png]]"), "");
   assert.equal(entryText("DMA works\n![scope](LabOS/Attachments/scope.png)\nNext observation"), "DMA works\nNext observation");
+});
+
+test("angle-bracket Markdown image destinations with spaces remain syncable links", () => {
+  const body = "Before\n![scope](<LabOS/Attachments/scope capture.png>)";
+  assert.equal(entryText(body), "Before");
+  assert.deepEqual(findEmbeds(body), ["LabOS/Attachments/scope capture.png"]);
+});
+
+test("duplicate hidden ids are reported before sync", () => {
+  const entries = splitEntries(entryBlock("same", new Date()) + "first\n" + entryBlock("same", new Date()) + "edited");
+  assert.deepEqual(duplicateEntryIds(entries), ["same"]);
+  assert.deepEqual(duplicateEntryIds(splitEntries(entryBlock("a", new Date()) + entryBlock("b", new Date()))), []);
+});
+
+test("linked event lookup allows a retry after frontmatter was written", () => {
+  const events = [{ type: "note", session_id: "session-1", payload: { links: [{ title: "log", path: "Notes/log.md", kind: "note" }] } }];
+  assert.equal(hasNoteLinkEvent(events, "Notes/log.md", "session-1"), true);
+  assert.equal(hasNoteLinkEvent(events, "Notes/log.md", "session-2"), false);
+  assert.equal(hasNoteLinkEvent(events, "Notes/log.md"), true);
 });
 
 test("entryIdAtLine maps a line to its entry", () => {
